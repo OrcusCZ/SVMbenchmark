@@ -24,7 +24,7 @@ int CuSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_
 	req_data_format.vectAlignment = 1;
 	req_data_format.transposed = true;
 	req_data_format.labelsInFloat = true;
-	req_data_format.supproted_types = SUPPORTED_FORMAT_DENSE;
+	req_data_format.supported_types = SUPPORTED_FORMAT_DENSE;
 
 	SAFE_CALL(SvmData::Load(filename, file_type, data_type, req_data_format));
 

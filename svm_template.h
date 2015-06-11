@@ -32,7 +32,7 @@ struct svm_trainingInfo {
 #define SUPPORTED_FORMAT_CSR 2
 #define SUPPORTED_FORMAT_BINARY 4
 struct svm_memory_dataformat {
-	unsigned int supproted_types; //bit mask: &1 - dense, &2 - CSR, &4 - binary
+	unsigned int supported_types; //bit mask: &1 - dense, &2 - CSR, &4 - binary
 	bool transposed;
 	bool allocate_write_combined;
 	bool allocate_pinned;
@@ -66,13 +66,15 @@ protected:
 
 public:
 	SvmData();
-	~SvmData();
+	virtual ~SvmData();
 	int Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type, struct svm_memory_dataformat req_data_format);
 	virtual int Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type) = 0; //requested data format settings need to be overloaded, than Load() is called 
 	int Delete();
 	unsigned int GetNumClasses() {return numClasses;}
 	unsigned int GetNumVects() {return numVects;}
+    unsigned int GetNumVectsAligned() {return numVects_aligned;}
 	unsigned int GetDimVects() {return dimVects;}
+    unsigned int GetDimVectsAligned() {return dimVects_aligned;}
 	SVM_DATA_TYPE GetDataType() {return type;}
 	float * GetDataRawPointer() {return data_raw;}
 	float GetValue(unsigned int iVect, unsigned int iDim) {return transposed? data_raw[iDim * numVects_aligned + iVect] : data_raw[iVect * dimVects_aligned + iDim];}
@@ -97,7 +99,7 @@ protected:
 
 public:
 	SvmModel();
-	~SvmModel();
+	virtual ~SvmModel();
 	int Delete();
 	virtual int Train(SvmData *data, struct svm_params * params, struct svm_trainingInfo *trainingInfo) = 0;
 	virtual int StoreModel(char *model_file_name, SVM_MODEL_FILE_TYPE type) = 0;

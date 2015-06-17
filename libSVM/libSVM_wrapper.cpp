@@ -126,10 +126,10 @@ int LibSvmModel::Delete() {
 		model = NULL;
 	}
 	
-	if (params != NULL) {
-		free(params);
-		params = NULL;
-	}
+	//if (params != NULL) {
+	//	free(params);
+	//	params = NULL;
+	//}
 
 	if (alphas != NULL) {
 		free(alphas);

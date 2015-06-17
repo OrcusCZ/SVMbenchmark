@@ -20,12 +20,16 @@ int OrcusSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE da
 
 int OrcusSvmModel::Train(SvmData *data, struct svm_params * params, struct svm_trainingInfo *trainingInfo)
 {
-    float * alpha = new float[data->GetNumVects()];
+    this->data = data;
+    this->params = params;
+
+    //float * alpha = new float[data->GetNumVects()];
+    alphas = (float *)malloc(data->GetNumVects() * sizeof(float));
     float rho;
 
     try
     {
-        OrcusSvmTrain(alpha, &rho,
+        OrcusSvmTrain(alphas, &rho,
             data->GetDataRawPointer(), (const float *)data->GetVectorLabelsPointer(),
             data->GetNumVects(), data->GetNumVectsAligned(),
             data->GetDimVects(), data->GetDimVectsAligned(),
@@ -35,12 +39,14 @@ int OrcusSvmModel::Train(SvmData *data, struct svm_params * params, struct svm_t
     {
         std::cerr << "Exception in OrcusSvm: " << e.what() << std::endl;
     }
+    params->rho = rho;
+    SAFE_CALL(CalculateSupperVectorCounts());
 
-    delete[] alpha;
+    //delete[] alpha;
     return SUCCESS;
 }
 
 int OrcusSvmModel::StoreModel(char *model_file_name, SVM_MODEL_FILE_TYPE type)
 {
-    return SUCCESS;
+    return StoreModelGeneric(model_file_name, type);
 }

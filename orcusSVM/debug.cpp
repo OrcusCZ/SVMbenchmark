@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cuda_runtime.h>
 #include "debug.h"
+#include "cudaerror.cuh"
 
 void export_c_buffer(void * data, size_t width, size_t height, size_t elemsize, std::string filename)
 {
@@ -26,7 +27,7 @@ void export_cuda_buffer(void * d_data, size_t width, size_t height, size_t elems
 
     size_t datasize = width * height * elemsize;
     char * data = new char [datasize];
-    cudaMemcpy(data, d_data, datasize, cudaMemcpyDeviceToHost);
+    assert_cuda(cudaMemcpy(data, d_data, datasize, cudaMemcpyDeviceToHost));
 
     uint32_t w = width,
         h = height,

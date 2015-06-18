@@ -289,8 +289,8 @@ __global__ void kernelComputeLambda(float * lambda, const float * y, const float
 {
     int i = ws[0];
     int j = ws[1];
-    float l1 = y[i] == 1 ? C - alpha[i] : alpha[i];
-    float l2 = y[j] == 1 ? alpha[j] : C - alpha[j];
+    float l1 = y[i] > 0 ? C - alpha[i] : alpha[i];
+    float l2 = y[j] > 0 ? alpha[j] : C - alpha[j];
     float l3 = (y[i] * g[i] - y[j] * g[j]) / (K[num_vec_aligned * i + i] + K[num_vec_aligned * j + j] - 2 * K[num_vec_aligned * i + j]);
     *lambda = min(l1, min(l2, l3));
 }
@@ -319,8 +319,8 @@ __global__ void kernelUpdateAlphaAndLambda(float * alpha, float * lambda, const 
 {
     int i = ws[0];
     int j = ws[1];
-    float l1 = y[i] == 1 ? C - alpha[i] : alpha[i];
-    float l2 = y[j] == 1 ? alpha[j] : C - alpha[j];
+    float l1 = y[i] > 0 ? C - alpha[i] : alpha[i];
+    float l2 = y[j] > 0 ? alpha[j] : C - alpha[j];
     float l3 = (y[i] * g[i] - y[j] * g[j]) / (K[num_vec_aligned * i + i] + K[num_vec_aligned * j + j] - 2 * K[num_vec_aligned * i + j]);
     float l = min(l1, min(l2, l3));
 

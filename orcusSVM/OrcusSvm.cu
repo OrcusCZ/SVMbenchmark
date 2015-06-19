@@ -365,7 +365,7 @@ __global__ void kernelUpdateAlphaAndLambdaCached(float * alpha, float * lambda, 
     alpha[j] -= l * y[j];
 }
 
-__global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheVecIdx, int cache_rows, const float * x, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
+__global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheVecIdx, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
 {
     int i = *i_ptr;
     if (KCacheRemapIdx[i] >= 0)
@@ -382,6 +382,7 @@ __global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemap
         KCacheRemapIdx[i] = last;
         KCacheVecIdx[last] = i;
     }
+
     //calculate cache matrix row [last], original index is [i]
     extern __shared__ float xi[];
     int idxshift = 0;
@@ -389,8 +390,8 @@ __global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemap
     {
         int idx = idxshift + threadIdx.x;
         if (idx < dim)
-            xi[idx] = x[num_vec_aligned * idx + i];
-            //xi[idx] = x[dim_aligned * i + idx];
+            //xi[idx] = xT[num_vec_aligned * idx + i];
+            xi[idx] = x[dim_aligned * i + idx];
         idxshift += blockDim.x;
     }
     __syncthreads();
@@ -400,8 +401,9 @@ __global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemap
         for (int d = 0; d < dim; d++)
         {
             //float diff = xi[d] - x[dim_aligned * j + d];
-            float diff = xi[d] - x[num_vec_aligned * d + j];
+            float diff = xi[d] - xT[num_vec_aligned * d + j];
             //float diff = x[dim_aligned * i + d] - x[dim_aligned * j + d];
+            //float diff = xT[num_vec_aligned * d + i] - xT[num_vec_aligned * d + j];
             sum += diff * diff;
         }
         K[num_vec_aligned * last + j] = exp(-gamma * sum);
@@ -430,7 +432,7 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
     size_t reduce_block_size = 256;
     size_t reduce_buff_size = rounduptomult(num_vec, reduce_block_size);
     size_t ones_size = std::max(num_vec_aligned, dim_aligned);
-    size_t cache_size_mb = 50;
+    size_t cache_size_mb = 200;
     size_t cache_rows = cache_size_mb * 1024 * 1024 / (num_vec_aligned * sizeof(float));
     cache_rows = std::min(cache_rows, num_vec);
 
@@ -514,7 +516,7 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
         //delete[] KCacheVecIdx;
 
         //check if I is cached
-        kernelCheckCache<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheVecIdx, cache_rows, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
+        kernelCheckCache<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheVecIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
         cacheLastPtrIdx = (cacheLastPtrIdx + 1) % 2;
 
         //KCacheVecIdx = new int[cache_rows + 2];
@@ -533,10 +535,10 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
         assert_cuda(cudaMemcpy(d_workingset + 1, d_reduceidx, sizeof(int), cudaMemcpyDeviceToDevice));
 
         //check if J is cached
-        kernelCheckCache<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset + 1, d_K, d_KCacheRemapIdx, d_KCacheVecIdx, cache_rows, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
+        kernelCheckCache<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset + 1, d_K, d_KCacheRemapIdx, d_KCacheVecIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
         cacheLastPtrIdx = (cacheLastPtrIdx + 1) % 2;
         //workaround if caching J deleted I out of cache
-        kernelCheckCache<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheVecIdx, cache_rows, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
+        kernelCheckCache<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheVecIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
         cacheLastPtrIdx = (cacheLastPtrIdx + 1) % 2;
 
         if (iter > 0 && iter % 1000 == 0)

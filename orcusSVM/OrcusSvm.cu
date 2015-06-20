@@ -250,66 +250,57 @@ __global__ void kernelReduceMaxIdx(float * val, int * idx, float * val_out, int 
     extern __shared__ float sval[];
     int * sidx = (int *)(sval + blockDim.x);
 
-    int frame = blockDim.x * blockIdx.x,
-        iter = 0;
+    int frame = blockDim.x * blockIdx.x;
+    float max_val = -FLT_MAX;
+    int max_idx = 0;
+
     while (frame < len)
     {
         int i = frame + threadIdx.x;
         if (i < len)
         {
-            sval[threadIdx.x] = val[i];
-            sidx[threadIdx.x] = idx[i];
-        }
-        else
-        {
-            sval[threadIdx.x] = -FLT_MAX;
-        }
-        __syncthreads();
-
-        for (int s = blockDim.x / 2; s > 0; s >>= 1)
-        {
-            if (threadIdx.x < s)
+            float v = val[i];
+            if (v > max_val)
             {
-                if (sval[threadIdx.x + s] > sval[threadIdx.x])
-                {
-                    sval[threadIdx.x] = sval[threadIdx.x + s];
-                    sidx[threadIdx.x] = sidx[threadIdx.x + s];
-                }
+                max_val = v;
+                max_idx = idx[i];
             }
-            __syncthreads();
         }
+        frame += gridDim.x * blockDim.x;
+    }
 
-        if (threadIdx.x == 0)
+    sval[threadIdx.x] = max_val;
+    sidx[threadIdx.x] = max_idx;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1)
+    {
+        if (threadIdx.x < s)
         {
-            int shift = iter * gridDim.x;
-            val_out[shift + blockIdx.x] = sval[0];
-            idx_out[shift + blockIdx.x] = sidx[0];
+            if (sval[threadIdx.x + s] > sval[threadIdx.x])
+            {
+                sval[threadIdx.x] = sval[threadIdx.x + s];
+                sidx[threadIdx.x] = sidx[threadIdx.x + s];
+            }
         }
         __syncthreads();
-        frame += gridDim.x * blockDim.x;
-        iter++;
+    }
+
+    if (threadIdx.x == 0)
+    {
+        val_out[blockIdx.x] = sval[0];
+        idx_out[blockIdx.x] = sidx[0];
     }
 }
 
 void reduceMaxIdx(float * d_val, int * d_idx, float * d_val2, int * d_idx2, int len, int reduce_block_size)
 {
-    //int orig_len = len;
-    /*dim3 dimBlock = dim3(reduce_block_size);
-    while (len > 1)
-    {
-        dim3 dimGrid = dim3(getgriddim(len, (int)dimBlock.x));
-        kernelReduceMaxIdx<<<dimGrid, dimBlock, dimBlock.x * sizeof(float) + dimBlock.x * sizeof(int)>>>(d_val, d_idx, d_val2, d_idx2, len);
-        len = dimGrid.x;
-    }*/
     dim3 dimBlock = dim3(reduce_block_size);
-    dim3 dimGrid = dim3(std::min(256, getgriddim(len, (int)dimBlock.x)));
-    //dummyKernel<<<dimGrid, dimBlock>>>();
+    dim3 dimGrid = dim3(std::min(reduce_block_size, getgriddim(len, (int)dimBlock.x)));
     kernelReduceMaxIdx<<<dimGrid, dimBlock, dimBlock.x * sizeof(float) + dimBlock.x * sizeof(int)>>>(d_val, d_idx, d_val2, d_idx2, len);
     len = dimGrid.x;
-    dimGrid.x = std::min(reduce_block_size, (int)getgriddim(dimGrid.x, dimBlock.x));
+    dimGrid.x = 1;
     kernelReduceMaxIdx<<<dimGrid, dimBlock, dimBlock.x * sizeof(float) + dimBlock.x * sizeof(int)>>>(d_val2, d_idx2, d_val, d_idx, len);
-    //export_cuda_buffer(d_val, 1, orig_len, sizeof(float), "reduceval.dat");
-    //export_cuda_buffer(d_idx, 1, orig_len, sizeof(int), "reduceidx.dat");
 }
 
 __global__ void kernelUpdateg(float * g, const float * lambda, const float * y, const float * K, const int * ws, int num_vec, int num_vec_aligned)

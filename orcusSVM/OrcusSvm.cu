@@ -367,7 +367,7 @@ __global__ void kernelUpdateAlphaAndLambdaCached(float * alpha, float * lambda, 
 
 __device__ int d_cacheUpdateCnt;
 
-__global__ void kernelCheckCache_(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
+__global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
 {
     int j = blockDim.x * blockIdx.x + threadIdx.x;
     int i = *i_ptr;
@@ -411,12 +411,12 @@ __global__ void kernelCheckCache_(const int * i_ptr, float * K, int * KCacheRema
             //float diff = xT[num_vec_aligned * d + i] - xT[num_vec_aligned * d + j];
             sum += diff * diff;
         }
-        K[num_vec_aligned * last + j] = exp(-gamma * sum);
+        K[num_vec_aligned * last + j] = expf(-gamma * sum);
         j += gridDim.x * blockDim.x;
     }
 }
 
-__global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
+__global__ void kernelCheckCache_(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
 {
     extern __shared__ int2 spriority[];
     int i = *i_ptr;
@@ -484,7 +484,7 @@ __global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemap
             //float diff = xT[num_vec_aligned * d + i] - xT[num_vec_aligned * d + j];
             sum += diff * diff;
         }
-        K[num_vec_aligned * last + j] = exp(-gamma * sum);
+        K[num_vec_aligned * last + j] = expf(-gamma * sum);
         j += gridDim.x * blockDim.x;
     }
 }

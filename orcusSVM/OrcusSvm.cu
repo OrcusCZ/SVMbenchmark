@@ -367,7 +367,7 @@ __global__ void kernelUpdateAlphaAndLambdaCached(float * alpha, float * lambda, 
 
 __device__ int d_cacheUpdateCnt;
 
-__global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
+__global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
 {
     int j = blockDim.x * blockIdx.x + threadIdx.x;
     int i = *i_ptr;
@@ -416,18 +416,17 @@ __global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemap
     }
 }
 
-__global__ void kernelCheckCache_(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
+__global__ void kernelCheckCachePriority(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned)
 {
     extern __shared__ int2 spriority[];
-    int i = *i_ptr;
     int j = blockDim.x * blockIdx.x + threadIdx.x;
+    int i = *i_ptr;
     if (KCacheRemapIdx[i] >= 0)
     {
         if (j == 0)
             KCacheRowPriority[KCacheRemapIdx[i]] = d_cacheUpdateCnt;  // refresh priority
         return;  //item already in cache
     }
-    //int last = (KCacheRowIdx[cache_rows + lastPtrIdx] + 1) % cache_rows;
     int2 minpriority = make_int2(INT_MAX, 0);
     for (int k = 0; k < cache_rows; k += blockDim.x)
     {
@@ -508,6 +507,7 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
         *d_KCacheRowIdx = nullptr,  // items at index [cache_rows] and [cache_rows+1] are indices of last inserted item
         *d_KCacheRowPriority = nullptr;  // the higher the priority is, the later was the item added
 
+    bool usePriorityCache = true;
     size_t reduce_block_size = 256;
     size_t reduce_buff_size = rounduptomult(num_vec, reduce_block_size);
     size_t ones_size = std::max(num_vec_aligned, dim_aligned);
@@ -599,8 +599,13 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
         //delete[] KCacheRowIdx;
 
         //check if I is cached
-        kernelCheckCache<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
-        cacheLastPtrIdx = 1 - cacheLastPtrIdx;
+        if (usePriorityCache)
+            kernelCheckCachePriority<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned);
+        else
+        {
+            kernelCheckCache << <dimGridCache, dimBlockCache, kernelCheckCacheSMSize >> >(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
+            cacheLastPtrIdx = 1 - cacheLastPtrIdx;
+        }
 
         //int * KCacheRowIdx = new int[cache_rows + 2];
         //assert_cuda(cudaMemcpy(KCacheRowIdx, d_KCacheRowIdx, (cache_rows + 2) * sizeof(int), cudaMemcpyDeviceToHost));
@@ -618,11 +623,19 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
         assert_cuda(cudaMemcpy(d_workingset + 1, d_reduceidx, sizeof(int), cudaMemcpyDeviceToDevice));
 
         //check if J is cached
-        kernelCheckCache<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset + 1, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
-        cacheLastPtrIdx = 1 - cacheLastPtrIdx;
-        //workaround if caching J deleted I out of cache
-        kernelCheckCache<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
-        cacheLastPtrIdx = 1 - cacheLastPtrIdx;
+        if (usePriorityCache)
+            kernelCheckCachePriority<<<dimGridCache, dimBlockCache, kernelCheckCacheSMSize>>>(d_workingset + 1, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned);
+        else
+        {
+            kernelCheckCache << <dimGridCache, dimBlockCache, kernelCheckCacheSMSize >> >(d_workingset + 1, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
+            cacheLastPtrIdx = 1 - cacheLastPtrIdx;
+        }
+        //workaround if caching J deleted I out of cache when not using priority cache
+        if (!usePriorityCache)
+        {
+            kernelCheckCache << <dimGridCache, dimBlockCache, kernelCheckCacheSMSize >> >(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
+            cacheLastPtrIdx = 1 - cacheLastPtrIdx;
+        }
 
         //int * KCacheRowIdx = new int[cache_rows + 2];
         //assert_cuda(cudaMemcpy(KCacheRowIdx, d_KCacheRowIdx, (cache_rows + 2) * sizeof(int), cudaMemcpyDeviceToHost));

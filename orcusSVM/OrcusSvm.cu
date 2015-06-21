@@ -362,38 +362,38 @@ __device__ int d_cacheUpdateCnt;
 //KCacheRemapIdx[x] = y
 __device__ int2 d_KCacheRemapIdxChanges[2];
 
-__global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheVecIdx, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
+__global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
 {
     int j = blockDim.x * blockIdx.x + threadIdx.x;
     int i = *i_ptr;
     if (KCacheRemapIdx[i] >= 0)
     {
         if (j == 0)
-            KCacheVecIdx[cache_rows + (1 - lastPtrIdx)] = KCacheVecIdx[cache_rows + lastPtrIdx];
+            KCacheRowIdx[cache_rows + (1 - lastPtrIdx)] = KCacheRowIdx[cache_rows + lastPtrIdx];
         return;  //item already in cache
     }
-    int last = (KCacheVecIdx[cache_rows + lastPtrIdx] + 1) % cache_rows;
+    int last = (KCacheRowIdx[cache_rows + lastPtrIdx] + 1) % cache_rows;
     if (j == 0)
     {
-        KCacheVecIdx[cache_rows + (1 - lastPtrIdx)] = last;
-        int del_i = KCacheVecIdx[last];
+        KCacheRowIdx[cache_rows + (1 - lastPtrIdx)] = last;
+        int del_i = KCacheRowIdx[last];
         if (del_i >= 0)
-            d_KCacheRemapIdxChanges[1] = make_int2(del_i, 1);  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
+            d_KCacheRemapIdxChanges[1] = make_int2(del_i, -1);  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
         //set correct indices
         d_KCacheRemapIdxChanges[0] = make_int2(i, last);
-        KCacheVecIdx[last] = i;
+        KCacheRowIdx[last] = i;
         ++d_cacheUpdateCnt;
     }
 
     //calculate cache matrix row [last], original index is [i]
-    extern __shared__ float xi[];
+    extern __shared__ float sx[];
     int idxshift = 0;
     while (idxshift < dim)
     {
         int idx = idxshift + threadIdx.x;
         if (idx < dim)
             //xi[idx] = xT[num_vec_aligned * idx + i];
-            xi[idx] = x[dim_aligned * i + idx];
+            sx[idx] = x[dim_aligned * i + idx];
         idxshift += blockDim.x;
     }
     __syncthreads();
@@ -402,8 +402,8 @@ __global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemap
         float sum = 0;
         for (int d = 0; d < dim; d++)
         {
-            //float diff = xi[d] - x[dim_aligned * j + d];
-            float diff = xi[d] - xT[num_vec_aligned * d + j];
+            //float diff = sx[d] - x[dim_aligned * j + d];
+            float diff = sx[d] - xT[num_vec_aligned * d + j];
             //float diff = x[dim_aligned * i + d] - x[dim_aligned * j + d];
             //float diff = xT[num_vec_aligned * d + i] - xT[num_vec_aligned * d + j];
             sum += diff * diff;

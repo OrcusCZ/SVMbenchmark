@@ -465,10 +465,14 @@ __global__ void kernelCheckCachePriority(const int * i_ptr, float * K, int * KCa
     {
         //KCacheRowIdx[cache_rows + (1 - lastPtrIdx)] = last;
         int del_i = KCacheRowIdx[last];
+        //if (del_i >= 0)
+        //    KCacheRemapIdx[del_i] = -1;  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
+        ////set correct indices
+        //KCacheRemapIdx[i] = last;
         if (del_i >= 0)
-            KCacheRemapIdx[del_i] = -1;  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
+            d_KCacheRemapIdxChanges[1] = make_int2(del_i, -1);  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
         //set correct indices
-        KCacheRemapIdx[i] = last;
+        d_KCacheRemapIdxChanges[0] = make_int2(i, last);
         KCacheRowIdx[last] = i;
         KCacheRowPriority[last] = ++d_cacheUpdateCnt;
     }
@@ -618,9 +622,9 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
         else
         {
             kernelCheckCache << <dimGridCache, dimBlockCache, kernelCheckCacheSMSize >> >(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
-            kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx);
             cacheLastPtrIdx = 1 - cacheLastPtrIdx;
         }
+        kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx);
 
         //int * KCacheRowIdx = new int[cache_rows + 2];
         //assert_cuda(cudaMemcpy(KCacheRowIdx, d_KCacheRowIdx, (cache_rows + 2) * sizeof(int), cudaMemcpyDeviceToHost));
@@ -643,9 +647,9 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
         else
         {
             kernelCheckCache << <dimGridCache, dimBlockCache, kernelCheckCacheSMSize >> >(d_workingset + 1, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
-            kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx);
             cacheLastPtrIdx = 1 - cacheLastPtrIdx;
         }
+        kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx);
         //workaround if caching J deleted I out of cache when not using priority cache
         if (!usePriorityCache)
         {

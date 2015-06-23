@@ -360,7 +360,8 @@ __device__ int d_cacheUpdateCnt;
 //contains changes to KCacheRemapIdx buffer, which should be written after kernelCheckCache ends
 //each change to buffer is contained in int2 variable (x,y) such that
 //KCacheRemapIdx[x] = y
-__device__ int2 d_KCacheRemapIdxChanges[2];
+//pair at index [2] is for KCacheRowPriority
+__device__ int2 d_KCacheChanges[3];
 
 __global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int lastPtrIdx)
 {
@@ -378,9 +379,9 @@ __global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemap
         KCacheRowIdx[cache_rows + (1 - lastPtrIdx)] = last;
         int del_i = KCacheRowIdx[last];
         if (del_i >= 0)
-            d_KCacheRemapIdxChanges[1] = make_int2(del_i, -1);  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
+            d_KCacheChanges[1] = make_int2(del_i, -1);  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
         //set correct indices
-        d_KCacheRemapIdxChanges[0] = make_int2(i, last);
+        d_KCacheChanges[0] = make_int2(i, last);
         KCacheRowIdx[last] = i;
         ++d_cacheUpdateCnt;
     }
@@ -413,17 +414,24 @@ __global__ void kernelCheckCache(const int * i_ptr, float * K, int * KCacheRemap
     }
 }
 
-__global__ void kernelCheckCacheFinalize(int * KCacheRemapIdx)
+__global__ void kernelCheckCacheFinalize(int * KCacheRemapIdx, int * KCacheRowPriority)
 {
 #pragma unroll
+    int2 c;
     for (int i = 0; i < 2; i++)
     {
-        int2 c = d_KCacheRemapIdxChanges[i];
+        c = d_KCacheChanges[i];
         if (c.x >= 0)
         {
             KCacheRemapIdx[c.x] = c.y;
-            d_KCacheRemapIdxChanges[i].x = -1;
+            d_KCacheChanges[i].x = -1;
         }
+    }
+    c = d_KCacheChanges[2];
+    if (c.x >= 0)
+    {
+        KCacheRowPriority[c.x] = c.y;
+        d_KCacheChanges[2].x = -1;
     }
 }
 
@@ -463,18 +471,13 @@ __global__ void kernelCheckCachePriority(const int * i_ptr, float * K, int * KCa
     int last = spriority[0].y;
     if (j == 0)
     {
-        //KCacheRowIdx[cache_rows + (1 - lastPtrIdx)] = last;
         int del_i = KCacheRowIdx[last];
-        //if (del_i >= 0)
-        //    KCacheRemapIdx[del_i] = -1;  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
-        ////set correct indices
-        //KCacheRemapIdx[i] = last;
         if (del_i >= 0)
-            d_KCacheRemapIdxChanges[1] = make_int2(del_i, -1);  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
+            d_KCacheChanges[1] = make_int2(del_i, -1);  //cache row for vector [del_i] will be overwritten, remove it from RemapIdx array
         //set correct indices
-        d_KCacheRemapIdxChanges[0] = make_int2(i, last);
+        d_KCacheChanges[0] = make_int2(i, last);
         KCacheRowIdx[last] = i;
-        KCacheRowPriority[last] = ++d_cacheUpdateCnt;
+        d_KCacheChanges[2] = make_int2(last, ++d_cacheUpdateCnt);
     }
 
     //calculate cache matrix row [last], original index is [i]
@@ -556,8 +559,10 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
     assert_cuda(cudaMemcpy(d_x, x, num_vec_aligned * dim_aligned * sizeof(float), cudaMemcpyHostToDevice));
     assert_cuda(cudaMemcpy(d_y, y, num_vec_aligned * sizeof(float), cudaMemcpyHostToDevice));
 
-    int KCacheRemapIdxChanges[4] = { -1, -1, -1, -1 };
-    assert_cuda(cudaMemcpyToSymbol(d_KCacheRemapIdxChanges, KCacheRemapIdxChanges, sizeof(KCacheRemapIdxChanges), 0));
+    int KCacheChanges[6];
+    for (int i = 0; i < sizeof(KCacheChanges) / sizeof(*KCacheChanges); i++)
+        KCacheChanges[i] = -1;
+    assert_cuda(cudaMemcpyToSymbol(d_KCacheChanges, KCacheChanges, sizeof(KCacheChanges), 0));
 
     float a = 1, b = 0;
     assert_cublas(cublasSgeam(cublas, CUBLAS_OP_T, CUBLAS_OP_N, num_vec, dim, &a, d_x, dim_aligned, &b, d_x, num_vec_aligned, d_xT, num_vec_aligned));
@@ -624,7 +629,7 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
             kernelCheckCache << <dimGridCache, dimBlockCache, kernelCheckCacheSMSize >> >(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
             cacheLastPtrIdx = 1 - cacheLastPtrIdx;
         }
-        kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx);
+        kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx, d_KCacheRowPriority);
 
         //int * KCacheRowIdx = new int[cache_rows + 2];
         //assert_cuda(cudaMemcpy(KCacheRowIdx, d_KCacheRowIdx, (cache_rows + 2) * sizeof(int), cudaMemcpyDeviceToHost));
@@ -649,12 +654,12 @@ void OrcusSvmTrain(float * alpha, float * rho, const float * x, const float * y,
             kernelCheckCache << <dimGridCache, dimBlockCache, kernelCheckCacheSMSize >> >(d_workingset + 1, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
             cacheLastPtrIdx = 1 - cacheLastPtrIdx;
         }
-        kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx);
+        kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx, d_KCacheRowPriority);
         //workaround if caching J deleted I out of cache when not using priority cache
         if (!usePriorityCache)
         {
             kernelCheckCache << <dimGridCache, dimBlockCache, kernelCheckCacheSMSize >> >(d_workingset, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, cache_rows, d_x, d_xT, gamma, num_vec, num_vec_aligned, dim, dim_aligned, cacheLastPtrIdx);
-            kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx);
+            kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx, d_KCacheRowPriority);
             cacheLastPtrIdx = 1 - cacheLastPtrIdx;
         }
 

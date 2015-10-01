@@ -1,6 +1,9 @@
 #include "svm_template.h"
 #include "utils.h"
+#ifndef __NO_CUDA
 #include "cuda_runtime_api.h"
+#endif
+
 
 ///////////////////////////////////////////////////////////////
 // Utils
@@ -30,7 +33,8 @@ SvmData::SvmData() {
 	dimVects = 0;
 	numVects_aligned = 0;
 	dimVects_aligned = 0;
-	data_raw = NULL;
+	data_dense = NULL;
+	data_csr = NULL;
 	class_labels = NULL;
 	vector_labels = NULL;
 	allocatedByCudaHost = false;
@@ -51,15 +55,32 @@ int SvmData::Delete() {
 	numVects_aligned = 0;
 	dimVects_aligned = 0;
 	if(allocatedByCudaHost) {
-		if(data_raw != NULL) cudaFree(data_raw);
-		if(class_labels != NULL) cudaFree(class_labels);
-		if(vector_labels != NULL) cudaFree(vector_labels);
+#ifdef __NO_CUDA
+		fprintf(stderr, "Error: __NO_CUDA deffined\n");
+#else
+		if(data_dense != NULL) cudaFreeHost(data_dense);
+		if(class_labels != NULL) cudaFreeHost(class_labels);
+		if(vector_labels != NULL) cudaFreeHost(vector_labels);
+		if(data_csr != NULL) {
+			cudaFreeHost(data_csr->values);
+			cudaFreeHost(data_csr->colInd);
+			cudaFreeHost(data_csr->rowOffsets);
+			free(data_csr);
+		}
+#endif
 	} else {
-		if(data_raw != NULL) free(data_raw);
+		if(data_dense != NULL) free(data_dense);
 		if(class_labels != NULL) free(class_labels);
 		if(vector_labels != NULL) free(vector_labels);
+		if(data_csr != NULL) {
+			free(data_csr->values);
+			free(data_csr->colInd);
+			free(data_csr->rowOffsets);
+			free(data_csr);
+		}
 	}
-	data_raw = NULL;
+	data_dense = NULL;
+	data_csr = NULL;
 	class_labels = NULL;
 	vector_labels = NULL;
 	allocatedByCudaHost = false;
@@ -69,19 +90,30 @@ int SvmData::Delete() {
 	return SUCCESS;
 }
 
-int SvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type, struct svm_memory_dataformat req_data_format) {
+int SvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type, struct svm_memory_dataformat *req_data_format) {
 	FILE *fid;
 
 	Delete();
 
 	float * labels_tmp = NULL;
 
-	FILE_SAFE_OPEN(fid, filename, "r")
+	if(file_type == LASVM_BINARY) {
+		FILE_SAFE_OPEN(fid, filename, "rb")
+	} else {
+		FILE_SAFE_OPEN(fid, filename, "r")
+	}
 
 		/* Read data from file. */
 		switch(file_type) {
 		case LIBSVM_TXT:
-			load_libsvm_data_dense(fid, data_type, req_data_format);
+			if((req_data_format->supported_types & SPARSE) && (data_type == UNKNOWN || data_type == SPARSE)) {
+				load_libsvm_data_sparse(fid, data_type, req_data_format);
+			} else {
+				load_libsvm_data_dense(fid, data_type, req_data_format);
+			}
+			break;
+		case LASVM_BINARY:
+			load_lasvm_binary_data(fid, req_data_format);
 			break;
 		default:
 			printf("Format of the data file not supported or the setting is wrong\n");
@@ -91,10 +123,24 @@ int SvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_ty
 	/* Close streams. */
 	fclose(fid);
 
+	//if(data_type == SPARSE && (req_data_format->supported_types & SPARSE) == 0) ConvertDataToDense(req_data_format);
+	//if(data_type == DENSE && (req_data_format->supported_types & DENSE) == 0) ConvertDataToCSR(req_data_format);
+
 	return SUCCESS;
 } //SvmData::Load()
 
-int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_memory_dataformat req_data_format) {
+int SvmData::ConvertDataToDense() {
+
+	return 0;
+} //SvmData::ConvertDataToDense
+
+int SvmData::ConvertDataToCSR() {
+
+	return 0;
+} //SvmData::ConvertDataToCSR
+
+
+int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_memory_dataformat *req_data_format) {
 
 	Delete();
 	bool useBuffer = true;
@@ -122,7 +168,7 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 
 	ret = SUCCESS;
 
-	if(req_data_format.labelsInFloat && sizeof(int) != sizeof(float)) REPORT_ERROR("4byte-int platform assumed");
+	if(req_data_format->labelsInFloat && sizeof(int) != sizeof(float)) REPORT_ERROR("4byte-int platform assumed");
 
 	if (useBuffer) {
 		/* Try to store file into buffer. */
@@ -207,19 +253,19 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 		}
 		fseek(fid, start_pos, SEEK_SET);
 
-		numVects_aligned = ALIGN_UP(numVects, req_data_format.vectAlignment);
-		dimVects_aligned = ALIGN_UP(dimVects, req_data_format.dimAlignment);
-		if (req_data_format.allocate_write_combined) malloc_host_WC((void **) & vector_labels, sizeof(int) * numVects_aligned);
+		numVects_aligned = ALIGN_UP(numVects, req_data_format->vectAlignment);
+		dimVects_aligned = ALIGN_UP(dimVects, req_data_format->dimAlignment);
+		if (req_data_format->allocate_write_combined) malloc_host_WC((void **) & vector_labels, sizeof(int) * numVects_aligned);
 		else {
-			if (req_data_format.allocate_pinned) malloc_host_PINNED((void **) & vector_labels, sizeof(int) * numVects_aligned);
+			if (req_data_format->allocate_pinned) malloc_host_PINNED((void **) & vector_labels, sizeof(int) * numVects_aligned);
 			else vector_labels = (int *) malloc(sizeof(float) * numVects_aligned);
 		}
-		if (req_data_format.allocate_write_combined) malloc_host_WC((void **) & data_raw, sizeof(float) * dimVects_aligned * numVects_aligned);
+		if (req_data_format->allocate_write_combined) malloc_host_WC((void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
 		else {
-			if (req_data_format.allocate_pinned) malloc_host_PINNED((void **) & data_raw, sizeof(float) * dimVects_aligned * numVects_aligned);
-			else data_raw = (float *) malloc(sizeof(float) * dimVects_aligned * numVects_aligned);
+			if (req_data_format->allocate_pinned) malloc_host_PINNED((void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
+			else data_dense = (float *) malloc(sizeof(float) * dimVects_aligned * numVects_aligned);
 		}
-		memset(data_raw, 0, sizeof(float) * dimVects_aligned * numVects_aligned);
+		memset(data_dense, 0, sizeof(float) * dimVects_aligned * numVects_aligned);
 
 		i = 0;
 		while (1) {
@@ -237,8 +283,8 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 				buf++;
 
 				/* Read value. */
-				if (req_data_format.transposed) data_raw[j * numVects_aligned + i] = strtof_fast(buf, &buf);
-				else data_raw[i * dimVects_aligned + j] = strtof_fast(buf, &buf);
+				if (req_data_format->transposed) data_dense[j * numVects_aligned + i] = strtof_fast(buf, &buf);
+				else data_dense[i * dimVects_aligned + j] = strtof_fast(buf, &buf);
 
 				if (*buf == '\n' || *buf == 0) {
 					break;
@@ -288,19 +334,19 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 
 		fseek(fid, start_pos, SEEK_SET);
 
-		numVects_aligned = ALIGN_UP(numVects, req_data_format.vectAlignment);
-		dimVects_aligned = ALIGN_UP(dimVects, req_data_format.dimAlignment);
-		if (req_data_format.allocate_write_combined) malloc_host_WC((void **) & vector_labels, sizeof(float) * numVects_aligned);
+		numVects_aligned = ALIGN_UP(numVects, req_data_format->vectAlignment);
+		dimVects_aligned = ALIGN_UP(dimVects, req_data_format->dimAlignment);
+		if (req_data_format->allocate_write_combined) malloc_host_WC((void **) & vector_labels, sizeof(float) * numVects_aligned);
 		else {
-			if (req_data_format.allocate_pinned) malloc_host_PINNED((void **) & vector_labels, sizeof(float) * numVects_aligned);
+			if (req_data_format->allocate_pinned) malloc_host_PINNED((void **) & vector_labels, sizeof(float) * numVects_aligned);
 			else vector_labels = (int *) malloc(sizeof(float) * numVects_aligned);
 		}
-		if (req_data_format.allocate_write_combined) malloc_host_WC((void **) & data_raw, sizeof(float) * dimVects_aligned * numVects_aligned);
+		if (req_data_format->allocate_write_combined) malloc_host_WC((void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
 		else {
-			if (req_data_format.allocate_pinned) malloc_host_PINNED((void **) & data_raw, sizeof(float) * dimVects_aligned * numVects_aligned);
-			else data_raw = (float *) malloc(sizeof(float) * dimVects_aligned * numVects_aligned);
+			if (req_data_format->allocate_pinned) malloc_host_PINNED((void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
+			else data_dense = (float *) malloc(sizeof(float) * dimVects_aligned * numVects_aligned);
 		}
-		memset(data_raw, 0, sizeof(float) * dimVects_aligned * numVects_aligned);
+		memset(data_dense, 0, sizeof(float) * dimVects_aligned * numVects_aligned);
 
 		i = 0;
 		buf = sbuf;
@@ -316,8 +362,8 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 				buf++;
 
 				/* Read value. */
-				if (req_data_format.transposed) data_raw[j * numVects_aligned + i] = strtof_fast(buf, &buf);
-				else data_raw[i * dimVects_aligned + j] = strtof_fast(buf, &buf);
+				if (req_data_format->transposed) data_dense[j * numVects_aligned + i] = strtof_fast(buf, &buf);
+				else data_dense[i * dimVects_aligned + j] = strtof_fast(buf, &buf);
 
 				if ((*buf == '\n') || (*buf == 0)) {
 					break;
@@ -334,9 +380,9 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 		free(sbuf);
 	}
 
-	allocatedByCudaHost = req_data_format.allocate_pinned || req_data_format.allocate_write_combined;
+	allocatedByCudaHost = req_data_format->allocate_pinned || req_data_format->allocate_write_combined;
 	this->type = DENSE;
-	transposed = req_data_format.transposed;
+	transposed = req_data_format->transposed;
 
 	//make class labels
 	int max_idx = -2;
@@ -363,7 +409,7 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 
 
 	//if float labels required:
-	if(req_data_format.labelsInFloat) {
+	if(req_data_format->labelsInFloat) {
 		labelsInFloat = true;
 		float *p = (float *)vector_labels;
 		for(unsigned int i=0; i < numVects; i++) p[i] = (float) vector_labels[i];
@@ -373,6 +419,391 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 } //SvmData::load_libsvm_data_dense
 
 
+int SvmData::load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_memory_dataformat *req_data_format) {
+
+	Delete();
+	bool useBuffer = true;
+
+	char *buf,
+		*sbuf = NULL,
+		*sbuf_tmp,
+		*line = NULL,
+		*line_end;
+	unsigned int i,
+		it = 0,
+		j,
+		start_pos,
+		sbuf_size = 64<<20, //intial size 64MB
+		read_chars,
+		new_len,
+		line_len;
+	int line_size,
+		ret;
+
+	if ((start_pos = ftell(fid)) == EOF) {
+		printf("File is not openned!\n");
+		exit(EXIT_FAILURE);
+	}
+
+	ret = SUCCESS;
+
+	if(req_data_format->labelsInFloat && sizeof(int) != sizeof(float)) REPORT_ERROR("4byte-int platform assumed");
+
+	this->data_csr = new csr;
+	data_csr->nnz = 0;
+	data_csr->numCols = 0;
+	data_csr->numRows = 0;
+
+	if (useBuffer) {
+		/* Try to store file into buffer. */
+		MEM_SAFE_ALLOC(sbuf, char, sbuf_size)
+			read_chars = 0;
+
+		while (1) {
+			new_len = (unsigned int) fread(sbuf + read_chars, sizeof(char), sbuf_size - read_chars, fid);
+
+			read_chars += new_len;
+			if (read_chars == sbuf_size) {
+				/* Expanding buffer size. */
+				sbuf_size <<= 1;
+				sbuf_tmp = (char *) realloc(sbuf, sbuf_size * sizeof(float));
+
+				if (sbuf_tmp == NULL) {
+					/* Not enough memory. */
+					printf("Warning: Not enough memory - buffering disabled!\n");
+					sbuf_size = 0;
+					free(sbuf);
+					fseek(fid, start_pos, SEEK_SET);
+					break;
+				} else {
+					sbuf = sbuf_tmp;
+				}
+			} else {
+				/* File loaded successfully. */
+				sbuf[read_chars++] = 0;
+				sbuf_size = read_chars;
+				sbuf = (char *) realloc(sbuf, sbuf_size * sizeof(float));
+				printf("Buffering input text file (%d B).\n", sbuf_size);
+				break;
+			}
+		}
+	}
+
+	if (!useBuffer || sbuf_size == 0) {
+		/* Count lines and elements. */
+		line = (char *) malloc((line_len = LINE_LENGTH) * sizeof(char));
+		while (1) {
+			line_size = parse_line(fid, line, line_end, line_len);
+			if (line_size < 1) {
+				if (line_size == 0) {
+					/* Empty line. */
+					exit_input_error(numVects + 1);
+				} else {
+					/* End of file. */
+					break;
+				}
+			}
+			buf = line;
+
+			//sparse data: simply count ':' and \n chars
+			while(*buf != '\n' && *buf != 0 && buf < line_end) {
+				if(*buf == ':') data_csr->nnz++;
+				buf++;
+			}
+			numVects++;
+
+			if (*buf == '\n') {
+				buf++;
+			}
+			numVects++;
+		}
+		fseek(fid, start_pos, SEEK_SET);
+
+		data_csr->numRows = numVects;
+		numVects_aligned = ALIGN_UP(numVects, req_data_format->vectAlignment);
+
+		if (req_data_format->allocate_write_combined) {
+			malloc_host_WC((void **) &vector_labels, sizeof(float) * numVects_aligned);
+			malloc_host_WC((void **) data_csr->values, sizeof(float) * data_csr->nnz);
+			malloc_host_WC((void **) data_csr->colInd, sizeof(int) * data_csr->nnz);
+			malloc_host_WC((void **) data_csr->rowOffsets, sizeof(int) * (numVects_aligned+1));
+		} else {
+			if (req_data_format->allocate_pinned) {
+				malloc_host_PINNED((void **) & vector_labels, sizeof(float) * numVects_aligned);
+				malloc_host_PINNED((void **) data_csr->values, sizeof(float) * data_csr->nnz);
+				malloc_host_PINNED((void **) data_csr->colInd, sizeof(int) * data_csr->nnz);
+				malloc_host_PINNED((void **) data_csr->rowOffsets, sizeof(int) * (numVects_aligned+1));
+			} else {
+				vector_labels = (int *) malloc(sizeof(float) * numVects_aligned);
+				data_csr->values = (float *) malloc(sizeof(float) * data_csr->nnz);
+				data_csr->colInd = (unsigned int *) malloc(sizeof(int) * data_csr->nnz);
+				data_csr->rowOffsets = (unsigned int *) malloc(sizeof(int) * (numVects_aligned+1));
+			}
+		}
+
+		i = 0;
+		data_csr->rowOffsets[0] = 0;
+		dimVects = 0;
+		unsigned int offset = 0;
+		while (1) {
+			if (parse_line(fid, line, line_end, line_len) == -1) {
+				/* End of file. */
+				break;
+			}
+			/* Read alpha. */
+			vector_labels[i] = strtol(line, &buf, 10);
+
+			while (buf < line_end) {
+				/* Read index. */
+				buf = next_string_spec_colon(buf);
+				j = strtoi_reverse(buf - 1) - 1;
+				buf++;
+
+				/* Read value. */
+				data_csr->values[offset] = strtof_fast(buf, &buf);
+				data_csr->colInd[offset] = j;
+				offset++;
+
+				if (*buf == '\n' || *buf == 0) {
+					break;
+				}
+				buf++;
+			}
+			if(dimVects <= j) dimVects = j+1;//maximum observed dimension
+			i++;
+			data_csr->rowOffsets[i] = offset;
+		}
+		i++;
+		for(int ii=i; ii < numVects_aligned+1; ii++) data_csr->rowOffsets[ii] = offset; //fill the padded area
+
+		dimVects_aligned = ALIGN_UP(dimVects, req_data_format->dimAlignment);
+		data_csr->numCols = dimVects;
+		/* Free memory. */
+		free(line);
+	} else {
+		/* Count lines and elements. */
+		buf = sbuf;
+		while (*buf != 0) {
+			//sparse data: simply count ':' and \n chars
+			while(*buf != '\n' && *buf != 0) {
+				if(*buf == ':') data_csr->nnz++;
+				buf++;
+			}
+			numVects++;
+			buf++;
+		}
+		data_csr->numRows = numVects;
+		numVects_aligned = ALIGN_UP(numVects, req_data_format->vectAlignment);
+
+		fseek(fid, start_pos, SEEK_SET);
+		if (req_data_format->allocate_write_combined) {
+			malloc_host_WC((void **) &vector_labels, sizeof(float) * numVects_aligned);
+			malloc_host_WC((void **) data_csr->values, sizeof(float) * data_csr->nnz);
+			malloc_host_WC((void **) data_csr->colInd, sizeof(int) * data_csr->nnz);
+			malloc_host_WC((void **) data_csr->rowOffsets, sizeof(int) * (numVects_aligned+1));
+		} else {
+			if (req_data_format->allocate_pinned) {
+				malloc_host_PINNED((void **) & vector_labels, sizeof(float) * numVects_aligned);
+				malloc_host_PINNED((void **) data_csr->values, sizeof(float) * data_csr->nnz);
+				malloc_host_PINNED((void **) data_csr->colInd, sizeof(int) * data_csr->nnz);
+				malloc_host_PINNED((void **) data_csr->rowOffsets, sizeof(int) * (numVects_aligned+1));
+			} else {
+				vector_labels = (int *) malloc(sizeof(float) * numVects_aligned);
+				data_csr->values = (float *) malloc(sizeof(float) * data_csr->nnz);
+				data_csr->colInd = (unsigned int *) malloc(sizeof(int) * data_csr->nnz);
+				data_csr->rowOffsets = (unsigned int *) malloc(sizeof(int) * (numVects_aligned+1));
+			}
+		}
+
+		i = 0;
+		data_csr->rowOffsets[0] = 0;
+		unsigned int offset = 0;
+		dimVects = 0; //maximum observed dimension
+		buf = sbuf;
+		while (*buf != 0) {
+			/* Read alpha. */
+			vector_labels[i] = strtol(buf, &buf, 10);
+			buf++;
+
+			while ((*buf != '\n') && (*buf != 0)) {
+				/* Read index. */
+				buf = next_string_spec_colon(buf);
+				j = strtoi_reverse(buf - 1) - 1;
+				buf++;
+
+				/* Read value. */
+				data_csr->values[offset] = strtof_fast(buf, &buf);
+				data_csr->colInd[offset] = j;
+				offset++;
+				
+				if ((*buf == '\n') || (*buf == 0)) {
+					break;
+				}
+				buf++;
+			}
+			if (*buf == '\n') {
+				buf++;
+			}
+			if(dimVects <= j) dimVects = j+1;//maximum observed dimension
+			i++;
+			data_csr->rowOffsets[i] = offset;
+		}
+		i++;
+		for(int ii=i; ii < numVects_aligned+1; ii++) data_csr->rowOffsets[ii] = offset; //fill the padded area
+
+		dimVects_aligned = ALIGN_UP(dimVects, req_data_format->dimAlignment);
+		data_csr->numCols = dimVects;
+		/* Free memory. */
+		free(sbuf);
+	}
+
+	allocatedByCudaHost = req_data_format->allocate_pinned || req_data_format->allocate_write_combined;
+	this->type = SPARSE;
+	if(req_data_format->transposed) REPORT_WARNING("Warning: CSR data format cannot be transposed")
+	transposed = false;
+
+	//make class labels
+	int max_idx = -2;
+	for(unsigned int i=0; i < numVects; i++) {
+		if(max_idx < vector_labels[i]) max_idx = vector_labels[i];
+	}
+	class_labels = (int *) malloc(sizeof(int) * (max_idx + 2));
+	for(int i=0; i < max_idx + 2; i++) class_labels[i] = -2;
+	for(unsigned int i=0; i < numVects; i++) {
+		int ci = vector_labels[i];
+		if(ci < -1) REPORT_ERROR("Class index lower than -1");
+		if(class_labels[ci+1] == -2) class_labels[ci+1] = ci;
+	}
+	numClasses = 0;
+	for(int i=0; i < max_idx + 2; i++) {
+		if(class_labels[i] != -2) {
+			class_labels[numClasses] = class_labels[i];
+			numClasses++;
+		}
+	}
+
+	//store if the first label is negative: to LibSVM compatibility of stored model:
+	invertLabels = !(vector_labels[0] == 1);
+
+	//if float labels required:
+	if(req_data_format->labelsInFloat) {
+		labelsInFloat = true;
+		float *p = (float *)vector_labels;
+		for(unsigned int i=0; i < numVects; i++) p[i] = (float) vector_labels[i];
+	}
+
+	return 0;
+} //load_libsvm_data_sparse
+
+
+int SvmData::load_lasvm_binary_data(FILE * &fid, svm_memory_dataformat *req_data_format) {
+	Delete();
+
+	unsigned int buf[2];
+	fread(&buf, sizeof(int), 2, fid);
+	this->numVects = buf[0];
+	numVects_aligned = ALIGN_UP(numVects, req_data_format->vectAlignment);
+	malloc_general(req_data_format, (void**)&vector_labels, sizeof(float) * numVects_aligned);
+	dimVects = buf[1];
+
+	if(dimVects > 0) { //dense
+		dimVects_aligned = ALIGN_UP(dimVects, req_data_format->dimAlignment);
+		malloc_general(req_data_format, (void**)&data_dense, sizeof(float) * numVects_aligned * dimVects_aligned);
+		memset(data_dense, 0, sizeof(float) * numVects_aligned * dimVects_aligned);
+		for(unsigned int i = 0; i < numVects; i++) {
+			int label = 0;
+			fread(&label, sizeof(int), 1, fid);
+			vector_labels[i] = label;
+			if(req_data_format->transposed) {
+				float value;
+				for(unsigned int k = 0; k < dimVects; k++) {
+					fread(&value, sizeof(float), 1, fid);
+					data_dense[k*numVects_aligned + i] = value;
+				}
+			} else {
+				fread(data_dense + i*dimVects_aligned, sizeof(float), dimVects, fid);
+			}
+		}
+		this->type = DENSE;
+		transposed = req_data_format->transposed;
+	} else { //sparse
+		this->type = SPARSE;
+		if(req_data_format->transposed) REPORT_WARNING("Warning: CSR data format cannot be transposed")
+		transposed = false;
+		data_csr = new csr;
+		data_csr->numRows = numVects;
+		malloc_general(req_data_format, (void**)&(data_csr->rowOffsets), sizeof(int) * (numVects_aligned + 1));
+		data_csr->nnz = 0;
+		data_csr->rowOffsets[0] = 0;
+		for(unsigned int i = 0; i < numVects; i++) {
+			int label = 0;
+			fread(&label, sizeof(int), 1, fid);
+			vector_labels[i] = label;
+			//count nnz:
+			unsigned int count = 0;
+			fread(&count, sizeof(int), 1, fid);
+			data_csr->nnz += count;
+			data_csr->rowOffsets[i+1] = data_csr->nnz;
+			fseek(fid, count * (sizeof(int) + sizeof(float)), SEEK_CUR);
+			//float foo_f;
+			//int foo_i[14];
+			//skip values in the first pass, fseek doesn work properly
+			//for(unsigned int foo=0; foo < count; foo++) {
+			//	fread(foo_i, sizeof(int), 14, fid);
+			//}
+			//for(unsigned int foo=0; foo < count; foo++) {
+			//	fread(&foo_f, sizeof(float), 1, fid);
+			//}
+		}
+		malloc_general(req_data_format, (void**)&(data_csr->values), sizeof(float) * data_csr->nnz);
+		malloc_general(req_data_format, (void**)&(data_csr->colInd), sizeof(int) * data_csr->nnz);
+		fseek(fid, 2*sizeof(int), SEEK_SET);
+		for(unsigned int i = 0; i < numVects; i++) {
+			int label = 0;
+			fread(&label, sizeof(int), 1, fid);
+			unsigned int count = 0;
+			fread(&count, sizeof(int), 1, fid);
+			fread(data_csr->colInd + data_csr->rowOffsets[i], sizeof(int), count, fid);
+			fread(data_csr->values + data_csr->rowOffsets[i], sizeof(float), count, fid);
+			unsigned int maxDim = 1 + data_csr->colInd[data_csr->rowOffsets[i+1]-1];
+			if(dimVects < maxDim) dimVects = maxDim;
+		}
+		dimVects_aligned = ALIGN_UP(dimVects, req_data_format->dimAlignment);
+		data_csr->numCols = dimVects;
+	}
+
+	//make class labels
+	int max_idx = -2;
+	for(unsigned int i=0; i < numVects; i++) {
+		if(max_idx < vector_labels[i]) max_idx = vector_labels[i];
+	}
+	class_labels = (int *) malloc(sizeof(int) * (max_idx + 2));
+	for(int i=0; i < max_idx + 2; i++) class_labels[i] = -2;
+	for(unsigned int i=0; i < numVects; i++) {
+		int ci = vector_labels[i];
+		if(ci < -1) REPORT_ERROR("Class index lower than -1");
+		if(class_labels[ci+1] == -2) class_labels[ci+1] = ci;
+	}
+	numClasses = 0;
+	for(int i=0; i < max_idx + 2; i++) {
+		if(class_labels[i] != -2) {
+			class_labels[numClasses] = class_labels[i];
+			numClasses++;
+		}
+	}
+
+	//store if the first label is negative: to LibSVM compatibility of stored model:
+	invertLabels = !(vector_labels[0] == 1);
+
+	//if float labels required:
+	if(req_data_format->labelsInFloat) {
+		labelsInFloat = true;
+		float *p = (float *)vector_labels;
+		for(unsigned int i=0; i < numVects; i++) p[i] = (float) vector_labels[i];
+	}
+
+	return 0;
+} //load_lasvm_binary_data
 
 ///////////////////////////////////////////////////////////////
 // SvmModel
@@ -392,8 +823,12 @@ int SvmModel::Delete() {
 	//don't delete data & params - they are only poiters - they need to be Destroyet themself externally
 	data = NULL;
 	params = NULL;
-	if(allocatedByCudaHost) cudaFree(alphas);
+#ifndef __NO_CUDA
+	if(allocatedByCudaHost)	cudaFree(alphas);
 	else free(alphas);
+#else
+	free(alphas);
+#endif
 	alphas = NULL;
 	return SUCCESS;
 }
@@ -422,6 +857,9 @@ int SvmModel::StoreModel_LIBSVM_TXT(char *model_file_name) {
 	FILE *fid;
 
 	if (alphas == NULL || data == NULL || params == NULL) {
+		return FAILURE;
+	}
+	if(data->data_dense == NULL && data->data_csr == NULL) {
 		return FAILURE;
 	}
 
@@ -455,6 +893,7 @@ int SvmModel::StoreModel_LIBSVM_TXT(char *model_file_name) {
 	}
 
 	//store positive Support Vectors
+	csr *data_csr = data->GetDataSparsePointer();
 	for (unsigned int i = 0; i < height; i++) {
 		if(alphas[i] > 0.0f) {
 			if(data->labelsInFloat && ((float*)data->vector_labels)[i] != (float) data->class_labels[classIds[1]]) continue;
@@ -462,13 +901,24 @@ int SvmModel::StoreModel_LIBSVM_TXT(char *model_file_name) {
 			float a = alphas[i];
 			fprintf(fid, "%.16g ", a);
 
-			for (unsigned int j = 0; j < width; j++) {
-				float value = data->GetValue(i, j);
-				if (value != 0.0F) {
+			if(data->data_dense != NULL) {
+				for (unsigned int j = 0; j < width; j++) {
+					float value = data->GetValue(i, j);
+					if (value != 0.0F) {
+						if (value == 1.0F) {
+							fprintf(fid, "%d:1 ", j + 1);
+						} else {
+							fprintf(fid, "%d:%g ", j + 1, value);
+						}
+					}
+				}
+			} else { //CSR data
+				for (unsigned int j = data_csr->rowOffsets[i]; j < data_csr->rowOffsets[i+1]; j++) {
+					float value = data_csr->values[j];
 					if (value == 1.0F) {
-						fprintf(fid, "%d:1 ", j + 1);
+						fprintf(fid, "%d:1 ", data_csr->colInd[j] + 1);
 					} else {
-						fprintf(fid, "%d:%g ", j + 1, value);
+						fprintf(fid, "%d:%g ", data_csr->colInd[j] + 1, value);
 					}
 				}
 			}
@@ -485,13 +935,24 @@ int SvmModel::StoreModel_LIBSVM_TXT(char *model_file_name) {
 			float a = alphas[i];
 			fprintf(fid, "%.16g ", -a);
 
-			for (unsigned int j = 0; j < width; j++) {
-				float value = data->GetValue(i, j);
-				if (value != 0.0F) {
+			if(data->data_dense != NULL) {
+				for (unsigned int j = 0; j < width; j++) {
+					float value = data->GetValue(i, j);
+					if (value != 0.0F) {
+						if (value == 1.0F) {
+							fprintf(fid, "%d:1 ", j + 1);
+						} else {
+							fprintf(fid, "%d:%g ", j + 1, value);
+						}
+					}
+				}
+			} else { //CSR data
+				for (unsigned int j = data_csr->rowOffsets[i]; j < data_csr->rowOffsets[i+1]; j++) {
+					float value = data_csr->values[j];
 					if (value == 1.0F) {
-						fprintf(fid, "%d:1 ", j + 1);
+						fprintf(fid, "%d:1 ", data_csr->colInd[j] + 1);
 					} else {
-						fprintf(fid, "%d:%g ", j + 1, value);
+						fprintf(fid, "%d:%g ", data_csr->colInd[j] + 1, value);
 					}
 				}
 			}
@@ -525,3 +986,16 @@ int SvmModel::CalculateSupperVectorCounts() {
 	}
 	return SUCCESS;
 }
+
+
+void malloc_general(svm_memory_dataformat *req_data_format, void **x, size_t size) {
+	if (req_data_format->allocate_write_combined) {
+			malloc_host_WC(x, size);
+	} else {
+		if (req_data_format->allocate_pinned) {
+			malloc_host_PINNED(x, size);
+		} else {
+			*x = malloc(size);
+		}
+	}
+} //malloc_general

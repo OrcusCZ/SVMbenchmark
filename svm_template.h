@@ -28,6 +28,15 @@ struct svm_trainingInfo {
 	float elTime2; //total of pure kernels time
 };
 
+struct csr {
+	unsigned int nnz;
+	unsigned int numRows;
+	unsigned int numCols;
+	float *values;
+	unsigned int *colInd;
+	unsigned int *rowOffsets;
+};
+
 #define SUPPORTED_FORMAT_DENSE 1
 #define SUPPORTED_FORMAT_CSR 2
 #define SUPPORTED_FORMAT_BINARY 4
@@ -42,8 +51,10 @@ struct svm_memory_dataformat {
 };
 
 enum SVM_DATA_TYPE {UNKNOWN, DENSE, SPARSE, BINARY};
-enum SVM_FILE_TYPE {LIBSVM_TXT};
+enum SVM_FILE_TYPE {LIBSVM_TXT, LASVM_BINARY};
 enum SVM_MODEL_FILE_TYPE {M_LIBSVM_TXT};
+
+void malloc_general(svm_memory_dataformat *format, void **x, size_t size);
 
 class SvmData {
 private:
@@ -54,20 +65,25 @@ protected:
 	unsigned int dimVects;
 	unsigned int dimVects_aligned;
 	unsigned int numClasses;
-	float *data_raw;
+	float *data_dense;
 	int *class_labels;
 	int *vector_labels;
 	bool allocatedByCudaHost;
 	bool transposed;
 	bool labelsInFloat;
 	bool invertLabels;
+	csr *data_csr; //pointer to sparse data representation
 
-	int load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_memory_dataformat req_data_format);
+	int load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_memory_dataformat *req_data_format);
+	int load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_memory_dataformat *req_data_format);
+	int load_lasvm_binary_data(FILE * &fid, svm_memory_dataformat *req_data_format);
+	int ConvertDataToDense();
+	int ConvertDataToCSR();
 
 public:
 	SvmData();
 	virtual ~SvmData();
-	int Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type, struct svm_memory_dataformat req_data_format);
+	int Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type, struct svm_memory_dataformat *req_data_format);
 	virtual int Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type) = 0; //requested data format settings need to be overloaded, than Load() is called 
 	int Delete();
 	unsigned int GetNumClasses() {return numClasses;}
@@ -76,8 +92,9 @@ public:
 	unsigned int GetDimVects() {return dimVects;}
     unsigned int GetDimVectsAligned() {return dimVects_aligned;}
 	SVM_DATA_TYPE GetDataType() {return type;}
-	float * GetDataRawPointer() {return data_raw;}
-	float GetValue(unsigned int iVect, unsigned int iDim) {return transposed? data_raw[iDim * numVects_aligned + iVect] : data_raw[iVect * dimVects_aligned + iDim];}
+	float * GetDataDensePointer() {return data_dense;}
+	csr * GetDataSparsePointer() {return data_csr;}
+	float GetValue(unsigned int iVect, unsigned int iDim) {return transposed? data_dense[iDim * numVects_aligned + iVect] : data_dense[iVect * dimVects_aligned + iDim];}
 	int * GetVectorLabelsPointer() {return vector_labels;}
 	int * GetClassLabelsPointer() {return class_labels;}
 	bool GetLabelsInFloat() {return labelsInFloat;}

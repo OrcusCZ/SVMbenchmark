@@ -39,7 +39,7 @@ int GpuSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data
 	req_data_format.labelsInFloat = true;
 	req_data_format.supported_types = SUPPORTED_FORMAT_DENSE;
 
-	SAFE_CALL(SvmData::Load(filename, file_type, data_type, req_data_format));
+	SAFE_CALL(SvmData::Load(filename, file_type, data_type, &req_data_format));
 
 	//load_data_dense(fid, prob->labels, prob->data, height, width, LOAD_FLAG_ALL_WC | LOAD_FLAG_TRANSPOSE | LOAD_FLAG_FILE_BUFFER);
 
@@ -129,7 +129,7 @@ int GpuSvmModel::Train(SvmData *_data, struct svm_params * _params, struct svm_t
 	}
 
 	//alphas allocated during the training (float*) malloc(nPoints*sizeof(floats))
-	performTraining(data->GetDataRawPointer(), data->GetNumVects(), data->GetDimVects(),
+	performTraining(data->GetDataDensePointer(), data->GetNumVects(), data->GetDimVects(),
 		(float *)data->GetVectorLabelsPointer(), &alphas, &kp, (float) params->C, ADAPTIVE,
 		(float) params->p, (float) params->eps, 0);
 

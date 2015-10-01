@@ -1,44 +1,44 @@
-#ifndef _LIBSVM_WRAPPER
-#define _LIBSVM_WRAPPER
+#ifndef _GPULIBSVM_WRAPPER
+#define _GPULIBSVM_WRAPPER
 
 #include "svm_template.h"
-#include "svm.h"
+#include "gpulibsvm.h"
 
 class SvmData;
 class SvmModel;
 
-class LibSvmData : public SvmData {
+class GPULibSvmData : public SvmData {
 private:
 protected:
-	struct svm_problem *prob;
+	struct gpulibsvm_problem *prob;
 
 	void ConvertFromDenseData();
-	void ConvertFromCSRData();
+	//void ConvertFromCSRData();
 public:
-	LibSvmData();
-	~LibSvmData();
+	GPULibSvmData();
+	~GPULibSvmData();
 
 	int Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type);
 	int Delete();
-	struct svm_problem * GetProb();
+	struct gpulibsvm_problem * GetProb();
 };
 
-class LibSvmModel : public SvmModel {
+class GPULibSvmModel : public SvmModel {
 private:
 	float * alphas;
 	void ConvertParameters(struct svm_params * par_src, struct svm_parameter * &par_dst);
 
 protected:
 	struct svm_params * params;
-	struct svm_model * model;
+	struct gpulibsvm_model * model;
 
 public:
-	LibSvmModel();
-	~LibSvmModel();
+	GPULibSvmModel();
+	~GPULibSvmModel();
 
 	int Train(SvmData * data, struct svm_params * params, struct svm_trainingInfo *trainingInfo);
 	int StoreModel(char * model_file_name, SVM_MODEL_FILE_TYPE type);
 	int Delete();
 };
 
-#endif //_LIBSVM_WRAPPER
+#endif //_GPULIBSVM_WRAPPER

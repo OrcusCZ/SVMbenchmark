@@ -37,10 +37,18 @@ int GtSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_
 	req_data_format.labelsInFloat = false;
 	req_data_format.supported_types = SUPPORTED_FORMAT_DENSE || SUPPORTED_FORMAT_CSR;
 
-	SAFE_CALL(SvmData::Load(filename, file_type, data_type, req_data_format));
+	SAFE_CALL(SvmData::Load(filename, file_type, data_type, &req_data_format));
 
-	if(this->type == DENSE) ConvertFromDenseData();
-	else REPORT_ERROR("Unsuported format in LibSVM wrapper");
+	switch(this->type) {
+		case DENSE:
+			ConvertFromDenseData();
+			break;
+		case SPARSE:
+			ConvertFromCSRData();
+			break;
+		default:
+			REPORT_ERROR("Unsuported format in gtSVM wrapper");
+	}
 
 	return SUCCESS;
 }
@@ -55,7 +63,7 @@ int GtSvmData::ConvertFromDenseData() {
 	for(unsigned int j=0; j < numVects; j++) {
 		labels.push_back(vector_labels[j]);
 		for(unsigned int i=0; i < dimVects; i++) {
-			float value = data_raw[j * dimVects + i];
+			float value = data_dense[j * dimVects + i];
 			if(value != 0.0f) {
 				values.push_back(value);
 				indices.push_back(i);
@@ -65,9 +73,23 @@ int GtSvmData::ConvertFromDenseData() {
 		offsets.push_back(n);
 	}
 	
-	//free dense data to save memory
-	//free(data_raw); //data needed to store model
-	//data_raw = NULL;
+	return SUCCESS;
+}
+
+int GtSvmData::ConvertFromCSRData() {
+	if(numVects == 0 || data_csr == NULL) REPORT_ERROR("No data loaded");
+	Delete();
+	
+	offsets.push_back(0);
+	for(unsigned int j=0; j < numVects; j++) {
+		offsets.push_back(data_csr->rowOffsets[j+1]);
+		labels.push_back(vector_labels[j]);
+	}
+	for(unsigned int i=0; i < data_csr->nnz; i++) {
+		values.push_back(data_csr->values[i]);
+		indices.push_back(data_csr->colInd[i]);
+	}
+
 	return SUCCESS;
 }
 
@@ -136,7 +158,7 @@ int GtSvmModel::Train(SvmData *_data, struct svm_params * _params, struct svm_tr
 			kernelParameter2,
 			kernelParameter3,
 			biased,
-			false,
+			true,
 			1
 		)
 	)

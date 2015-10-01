@@ -1,3 +1,5 @@
+//GPU LibSVM modeifications
+
 //#define _CRT_SECURE_NO_WARNINGS
 
 #include <iostream>
@@ -9,20 +11,20 @@
 using namespace std;
 
 #include "utils.h"
-#include "libSVM_wrapper.h"
+#include "GPUlibSVM_wrapper.h"
 #include "libSVM_utils.h"
 
-LibSvmData::LibSvmData() {
+GPULibSvmData::GPULibSvmData() {
 	printf("Using LibSVM...\n\n");
 	prob = NULL;
 }
 
-LibSvmData::~LibSvmData() {
+GPULibSvmData::~GPULibSvmData() {
 	Delete();
 }
 
-int LibSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type) {
-	
+int GPULibSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type) {
+
 	svm_memory_dataformat req_data_format;
 	req_data_format.allocate_pinned = false;
 	req_data_format.allocate_write_combined = false;
@@ -30,8 +32,8 @@ int LibSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data
 	req_data_format.vectAlignment = 1;
 	req_data_format.transposed = false;
 	req_data_format.labelsInFloat = false;
-	req_data_format.supported_types = SUPPORTED_FORMAT_DENSE | SUPPORTED_FORMAT_CSR;
-	//req_data_format.supported_types = SUPPORTED_FORMAT_DENSE;
+	//req_data_format.supported_types = SUPPORTED_FORMAT_DENSE | SUPPORTED_FORMAT_CSR;
+	req_data_format.supported_types = SUPPORTED_FORMAT_DENSE;
 
 	SAFE_CALL(SvmData::Load(filename, file_type, data_type, &req_data_format));
 
@@ -39,9 +41,9 @@ int LibSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data
 		case DENSE:
 			ConvertFromDenseData();
 			break;
-		case SPARSE:
-			ConvertFromCSRData();
-			break;
+		//case SPARSE:
+		//	ConvertFromCSRData();
+		//	break;
 		default:
 			REPORT_ERROR("Unsuported format in LibSVM wrapper");
 	}
@@ -64,14 +66,14 @@ int LibSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data
 	return SUCCESS;
 }
 
-int LibSvmData::Delete() {
+int GPULibSvmData::Delete() {
 	if (prob == NULL) {
 		return SUCCESS;
 	}
 
 	if (prob->x != NULL) {
-		if (*(prob->x) != NULL) {
-			free(*(prob->x));
+		if (prob->x->values != NULL) {
+			free(prob->x->values);
 		}
 		free(prob->x);
 		prob->x = NULL;
@@ -87,101 +89,93 @@ int LibSvmData::Delete() {
 	return SUCCESS;
 }
 
-struct svm_problem * LibSvmData::GetProb() {
+struct gpulibsvm_problem * GPULibSvmData::GetProb() {
 	return prob;
 }
 
-void LibSvmData::ConvertFromDenseData() {
+void GPULibSvmData::ConvertFromDenseData() {
 	if(numVects == 0) REPORT_ERROR("No data loaded");
 	Delete();
-	MEM_SAFE_ALLOC(prob, struct svm_problem, 1);
+	MEM_SAFE_ALLOC(prob, struct gpulibsvm_problem, 1);
 	prob->l = numVects;
-	
-	//compute number of non-zeros:
-	size_t elements = 0;
-	for(unsigned int j=0; j < numVects; j++) {
-		for(unsigned int i=0; i < dimVects; i++) {
-			if(data_dense[j * dimVects + i] != 0.0f) elements++;
-		}
-		elements++; //terminal node index = -1
-	}
 
-	prob->y = Malloc(double,prob->l);
-	prob->x = Malloc(struct svm_node *,prob->l);
-	struct svm_node * x_space = Malloc(struct svm_node,elements);
-	
+	////compute number of non-zeros:
+	//size_t elements = 0;
+	//for(unsigned int j=0; j < numVects; j++) {
+	//	for(unsigned int i=0; i < dimVects; i++) {
+	//		if(data_dense[j * dimVects + i] != 0.0f) elements++;
+	//	}
+	//	elements++; //terminal node index = -1
+	//}
+
+	prob->y = Malloc(double, prob->l);
+	prob->x = Malloc(struct gpulibsvm_node, prob->l);
+	//struct gpulibsvm_node * x_space = Malloc(struct gpulibsvm_node,elements);
+
 	unsigned int n = 0;
 	for(unsigned int j=0; j < numVects; j++) {
-		prob->x[j] = &x_space[n];
-		prob->y[j] = vector_labels[j];
-		for(unsigned int i=0; i < dimVects; i++) {
-			if(data_dense[j * dimVects + i] != 0.0f) {
-				x_space[n].index = i;
-				x_space[n].value = data_dense[j * dimVects + i];
-				n++;
-			}
-		}
-		x_space[n].index = -1;
-		x_space[n].value = 0;
-		n++;
+		prob->y[j] = this->vector_labels[j];
+		prob->x[j].dim = dimVects;
+		prob->x[j].values = Malloc(double, dimVects);
+		for(unsigned int i=0; i < dimVects; i++) prob->x[j].values[i] = data_dense[j * dimVects + i];
 	}
-	
+
 	//free dense data to save memory
 	free(data_dense);
 	data_dense = NULL;
-} //LibSvmData::ConvertFromDenseData
+} //GPULibSvmData::ConvertFromDenseData
 
-void LibSvmData::ConvertFromCSRData() {
-	if(numVects == 0 || data_csr == NULL) REPORT_ERROR("No data loaded");
-	Delete();
-	MEM_SAFE_ALLOC(prob, struct svm_problem, 1);
-	prob->l = numVects;
-	
-	prob->y = Malloc(double,prob->l);
-	prob->x = Malloc(struct svm_node *,prob->l);
-	struct svm_node * x_space = Malloc(struct svm_node,data_csr->nnz + numVects);
-	
-	unsigned int n = 0;
-	for(unsigned int j=0; j < numVects; j++) {
-		prob->x[j] = &x_space[n];
-		prob->y[j] = vector_labels[j];
-		for(unsigned int i=data_csr->rowOffsets[j]; i < data_csr->rowOffsets[j+1]; i++) {
-				x_space[n].index = data_csr->colInd[i];
-				x_space[n].value = data_csr->values[i];
-				n++;
-		}
-		x_space[n].index = -1;
-		x_space[n].value = 0;
-		n++;
-	}
-	
-	//free sparse data to save memory
-	free(data_csr->values);
-	free(data_csr->colInd);
-	free(data_csr->rowOffsets);
-	delete data_csr;
-	data_csr = NULL;
-} //LibSvmData::ConvertFromCSRData
+//void GPULibSvmData::ConvertFromCSRData() {
+//	if(numVects == 0 || data_csr == NULL) REPORT_ERROR("No data loaded");
+//	Delete();
+//	MEM_SAFE_ALLOC(prob, struct svm_problem, 1);
+//	prob->l = numVects;
+//	
+//	prob->y = Malloc(double,prob->l);
+//	prob->x = Malloc(struct svm_node *,prob->l);
+//	struct svm_node * x_space = Malloc(struct svm_node,data_csr->nnz + numVects);
+//	
+//	unsigned int n = 0;
+//	for(unsigned int j=0; j < numVects; j++) {
+//		prob->x[j] = &x_space[n];
+//		prob->y[j] = vector_labels[j];
+//		for(unsigned int i=data_csr->rowOffsets[j]; i < data_csr->rowOffsets[j+1]; i++) {
+//				x_space[n].index = data_csr->colInd[i];
+//				x_space[n].value = data_csr->values[i];
+//				n++;
+//		}
+//		x_space[n].index = -1;
+//		x_space[n].value = 0;
+//		n++;
+//	}
+//	
+//	//free sparse data to save memory
+//	free(data_csr->values);
+//	free(data_csr->colInd);
+//	free(data_csr->rowOffsets);
+//	delete data_csr;
+//	data_csr = NULL;
+//} //GPULibSvmData::ConvertFromCSRData
 
 
 /////////////////////////////////////////////////////////////
 //MODEL
-LibSvmModel::LibSvmModel() {
+GPULibSvmModel::GPULibSvmModel() {
 	model = NULL;
 	params = NULL;
 	alphas = NULL;
 }
 
-LibSvmModel::~LibSvmModel() {
+GPULibSvmModel::~GPULibSvmModel() {
 	Delete();
 }
 
-int LibSvmModel::Delete() {
+int GPULibSvmModel::Delete() {
 	if (model != NULL) {
 		delete model;
 		model = NULL;
 	}
-	
+
 	//if (params != NULL) {
 	//	free(params);
 	//	params = NULL;
@@ -195,12 +189,12 @@ int LibSvmModel::Delete() {
 	return SUCCESS;
 }
 
-int LibSvmModel::Train(SvmData *_data, struct svm_params * _params, struct svm_trainingInfo *trainingInfo) {
+int GPULibSvmModel::Train(SvmData *_data, struct svm_params * _params, struct svm_trainingInfo *trainingInfo) {
 	unsigned int numSVs;
 	svm_parameter * libsvm_params;
-	LibSvmData *data = (LibSvmData *) _data;
+	GPULibSvmData *data = (GPULibSvmData *) _data;
 	params = _params;
-	
+
 	if (data == NULL) {
 		return FAILURE;
 	}
@@ -216,12 +210,12 @@ int LibSvmModel::Train(SvmData *_data, struct svm_params * _params, struct svm_t
 		libsvm_params->gamma = 1.0 / data->GetDimVects();
 	}
 
-	model = svm_train(data->GetProb(), libsvm_params);
+	model = gpulibsvm_train(data->GetProb(), libsvm_params);
 
 	return SUCCESS;
 }
 
-void LibSvmModel::ConvertParameters(struct svm_params * par_src, struct svm_parameter * &par_dst) {
+void GPULibSvmModel::ConvertParameters(struct svm_params * par_src, struct svm_parameter * &par_dst) {
 	par_dst = (struct svm_parameter *) malloc(sizeof(struct svm_parameter));
 
 	par_dst->C = par_src->C;
@@ -243,9 +237,9 @@ void LibSvmModel::ConvertParameters(struct svm_params * par_src, struct svm_para
 	par_dst->weight = NULL;
 }
 
-int LibSvmModel::StoreModel(char * model_file_name, SVM_MODEL_FILE_TYPE type) {
+int GPULibSvmModel::StoreModel(char * model_file_name, SVM_MODEL_FILE_TYPE type) {
 	if(type != M_LIBSVM_TXT) REPORT_ERROR("LIBSVM_TXT format only is supported to store the model");
-	if (svm_save_model(model_file_name, model) == 0) {
+	if (gpulibsvm_save_model(model_file_name, model) == 0) {
 		return SUCCESS;
 	} else {
 		return FAILURE;

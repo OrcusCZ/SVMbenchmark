@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdexcept>
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include <cufft.h>
 #include <cublas_v2.h>
@@ -8,6 +9,7 @@
 #define STRINGIZE2(x) #x
 #define STRINGIZE(x) STRINGIZE2(x)
 
+//Runtime API error
 static void assert_cuda_(cudaError_t t, const char * msg)
 {
     if (t == cudaSuccess)
@@ -15,6 +17,21 @@ static void assert_cuda_(cudaError_t t, const char * msg)
     std::string w(msg);
     w += ": ";
     w += cudaGetErrorString(t);
+    throw std::runtime_error(w);
+}
+
+//Driver API error
+static void assert_cuda_(CUresult t, const char * msg)
+{
+    if (t == CUDA_SUCCESS)
+        return;
+    std::string w(msg);
+    w += ": ";
+    const char * str;
+    if (cuGetErrorString(t, &str) == CUDA_SUCCESS)
+        w += str;
+    else
+        w += "Unknown error";
     throw std::runtime_error(w);
 }
 

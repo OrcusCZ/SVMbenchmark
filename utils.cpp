@@ -4,8 +4,10 @@
 #include <stdio.h>
 #include <stdLib.h>
 #include <math.h>
+#ifndef __NO_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
+#endif
 
 using namespace std;
 
@@ -453,6 +455,9 @@ void load_data_dense(FILE * & fid, float * & labels, float * & alphas, float * &
 //}
 
 void malloc_host_WC(void** ptr, size_t size) {
+#ifdef __NO_CUDA
+		fprintf(stderr, "Error: __NO_CUDA deffined\n");
+#else
 	cudaError_t err;
 
 	int e = cudaGetLastError();
@@ -464,9 +469,13 @@ void malloc_host_WC(void** ptr, size_t size) {
 			size, cudaGetErrorString(err));
 		exit(err);
 	}
+#endif
 }
 
 void malloc_host_PINNED(void** ptr, size_t size) {
+#ifdef __NO_CUDA
+		fprintf(stderr, "Error: __NO_CUDA deffined\n");
+#else
 	cudaError_t err;
 
 	int e = cudaGetLastError();
@@ -478,9 +487,11 @@ void malloc_host_PINNED(void** ptr, size_t size) {
 			size, cudaGetErrorString(err));
 		exit(err);
 	}
+#endif
 }
 
 void select_device(int device_id, unsigned int sm_limit, int is_max) {
+	#ifndef __NO_CUDA
 	void *dummy;
 	unsigned int sm,
 		dev_prop,
@@ -612,6 +623,7 @@ void select_device(int device_id, unsigned int sm_limit, int is_max) {
 			break;
 		}
 	}
+#endif // not __NO_CUDA
 }
 
 int get_closest_label(int * labels, int labels_len, float alpha) {

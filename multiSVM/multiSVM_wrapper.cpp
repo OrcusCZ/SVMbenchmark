@@ -20,7 +20,7 @@ int MultiSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE da
 	req_data_format.labelsInFloat = false;
 	req_data_format.supported_types = SUPPORTED_FORMAT_DENSE;
 
-	SAFE_CALL(SvmData::Load(filename, file_type, data_type, req_data_format));
+	SAFE_CALL(SvmData::Load(filename, file_type, data_type, &req_data_format));
 
 	return SUCCESS;
 }
@@ -112,7 +112,7 @@ int MultiSvmModel::Train(SvmData *_data, struct svm_params * _params, struct svm
 		tmp_labels[i] = (p[i] == 1)? 1 : 2;
 	}
 
-	trainclassifier			( 	data->GetDataRawPointer(),
+	trainclassifier			( 	data->GetDataDensePointer(),
 								tmp_labels,
 								rdata,
 								alphas,

@@ -32,6 +32,7 @@
 #define SAFE_CALL(call) {int err = call; if (SUCCESS != err) { fprintf (stderr, "Error %i in file %s at line %i.", err, __FILE__, __LINE__ ); exit(EXIT_FAILURE);}}
 
 #define REPORT_ERROR(error_string) { fprintf (stderr, "Error ""%s"" thrown in file %s at line %i.", error_string, __FILE__, __LINE__ ); exit(EXIT_FAILURE);}
+#define REPORT_WARNING(error_string) { fprintf (stderr, "Warning ""%s"" raised in file %s at line %i.", error_string, __FILE__, __LINE__ );}
 
 #define FILE_SAFE_OPEN(FID, FNAME, MODE) if ((FID = fopen(FNAME, MODE)) == 0) { \
 	std::cerr << "Error: Can't open file \"" << FNAME << "\"!\n"; \

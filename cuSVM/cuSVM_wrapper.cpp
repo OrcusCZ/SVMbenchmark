@@ -26,7 +26,7 @@ int CuSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_
 	req_data_format.labelsInFloat = true;
 	req_data_format.supported_types = SUPPORTED_FORMAT_DENSE;
 
-	SAFE_CALL(SvmData::Load(filename, file_type, data_type, req_data_format));
+	SAFE_CALL(SvmData::Load(filename, file_type, data_type, &req_data_format));
 
 	/* Read data from file. */
 	//load_data_dense(fid, data->ref_results, data->vectors, data->nof_vectors,
@@ -67,7 +67,7 @@ int CuSvmModel::Train(SvmData *_data, struct svm_params * _params, struct svm_tr
 	MEM_SAFE_ALLOC(alphas, float, numSVs)
 	corr = 0;
 
-	SVMTrain(alphas, &beta, (float *)data->GetVectorLabelsPointer(), data->GetDataRawPointer(),
+	SVMTrain(alphas, &beta, (float *)data->GetVectorLabelsPointer(), data->GetDataDensePointer(),
 		(float) params->C, (float) params->gamma, numSVs, data->GetDimVects(),
 		(float) params->eps);
 

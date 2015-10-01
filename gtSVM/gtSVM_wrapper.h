@@ -20,6 +20,7 @@ protected:
 	std::vector<size_t> offsets;
 
 	int ConvertFromDenseData();
+	int ConvertFromCSRData();
 public:
 	GtSvmData();
 	~GtSvmData();

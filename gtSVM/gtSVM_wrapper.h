@@ -37,8 +37,9 @@ class GtSvmModel : public SvmModel {
 private:
 protected:
 	AutoContext context;
+	bool LargeOrSmallClusters; // small/large clusters = false/true
 public:
-	GtSvmModel();
+	GtSvmModel(bool LargeOrSmallClusters);
 	//~GtSvmModel();
 
 	int Train(SvmData *data, struct svm_params * params, struct svm_trainingInfo *trainingInfo);

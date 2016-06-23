@@ -156,9 +156,9 @@ __global__ static void calculatealphas(		float* d_xtraindata,
 			}
 
 
-			float K12= d_kdata [d_Ilow_cache[tid]*ntraining + g_Iup];
-			float K11= d_kdata [d_Ilow_cache[tid]*ntraining + g_Ilow];
-			float K22= d_kdata [d_Iup_cache[tid]*ntraining + g_Iup];
+			float K12= d_kdata [(size_t)d_Ilow_cache[tid]*ntraining + g_Iup];
+			float K11= d_kdata [(size_t)d_Ilow_cache[tid]*ntraining + g_Ilow];
+			float K22= d_kdata [(size_t)d_Iup_cache[tid]*ntraining + g_Iup];
 
 			float nu= 2*K12 - K11 -K22;
 

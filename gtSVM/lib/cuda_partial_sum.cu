@@ -27,8 +27,9 @@
 #include "cuda_helpers.hpp"
 #include "helpers.hpp"
 
-#include <boost/assert.hpp>
-#include <boost/cstdint.hpp>
+//already included in helpers.hpp
+//#include <boost/assert.hpp>
+//#include <boost/cstdint.hpp>
 
 #include <algorithm>
 #include <stdexcept>

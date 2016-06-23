@@ -2,7 +2,7 @@
 
 #include <iostream>
 #include <stdio.h>
-#include <stdLib.h>
+#include <stdlib.h>
 #include <math.h>
 #ifndef __NO_CUDA
 #include <cuda.h>
@@ -12,7 +12,7 @@
 using namespace std;
 
 #include "utils.h"
-#include "stopwatch.h"
+#include "my_stopwatch.h"
 
 void exit_input_error(int line_num) {
 	fprintf(stderr, "Wrong input format at line %d\n", line_num);
@@ -26,7 +26,7 @@ void load_data_dense(FILE * & fid, float * & labels, float * & alphas, float * &
 		*sbuf_tmp,
 		*line = NULL,
 		*line_end;
-	unsigned int i,
+	size_t i,
 		it = 0,
 		j,
 		start_pos,
@@ -34,8 +34,8 @@ void load_data_dense(FILE * & fid, float * & labels, float * & alphas, float * &
 		read_chars,
 		new_len,
 		line_len;
-	int line_size,
-		ret;
+	long long line_size;
+	int ret;
 
 	if ((start_pos = ftell(fid)) == EOF) {
 		cerr << "File is not openned!\n";
@@ -674,7 +674,7 @@ char *next_string_spec(char *str) {
 	return out;
 }
 
-inline char *next_string_spec_space(char *str) {
+char *next_string_spec_space(char *str) {
 	char *out = str;
 
 	while ((*out != ' ') && (*out != 0) && (*out != '\n')) {
@@ -684,7 +684,7 @@ inline char *next_string_spec_space(char *str) {
 	return out;
 }
 
-inline char *next_string_spec_space_plus(char *str) {
+char *next_string_spec_space_plus(char *str) {
 	char *out = str;
 
 	while ((*out != ' ') && (*out != '\n') && (*out != 0)) {
@@ -694,7 +694,7 @@ inline char *next_string_spec_space_plus(char *str) {
 	return out;
 }
 
-inline char * next_string_spec_colon(char *str) {
+char * next_string_spec_colon(char *str) {
 	char * out = str;
 
 	while ((*out != ':') && (*out != 0)) {
@@ -704,7 +704,7 @@ inline char * next_string_spec_colon(char *str) {
 	return out;
 }
 
-inline char * last_string_spec_colon(char * str) {
+char * last_string_spec_colon(char * str) {
 	char * out = str;
 
 	while (*out != ':') {
@@ -714,7 +714,7 @@ inline char * last_string_spec_colon(char * str) {
 	return --out;
 }
 
-inline char * next_eol(char * str) {
+char * next_eol(char * str) {
 	char *out = str;
 
 	while ((*out != '\n') && (*out != 0)) {
@@ -724,7 +724,7 @@ inline char * next_eol(char * str) {
 	return out;
 }
 
-inline unsigned int strtoi_reverse(char * str) {
+unsigned int strtoi_reverse(char * str) {
 	unsigned int val = 0,
 		mul = 1;
 
@@ -739,7 +739,7 @@ inline unsigned int strtoi_reverse(char * str) {
 /**
   * Used for loading alpha value and vector values.
   */
-inline float strtof_fast(char * str, char ** end_ptr) {
+float strtof_fast(char * str, char ** end_ptr) {
 	char phase = 0;
 	int exp = 0;
 	float val = 0.0F,
@@ -797,9 +797,9 @@ inline float strtof_fast(char * str, char ** end_ptr) {
 }
 
 /* Returns length of line. */
-inline int parse_line(FILE * & fid, char * & line, char * & line_end, unsigned int & line_len) {
+long long parse_line(FILE * & fid, char * & line, char * & line_end, size_t & line_len) {
 	char c;
-	unsigned int idx;
+	size_t idx;
 
 	idx = 0;
 	c = fgetc(fid);

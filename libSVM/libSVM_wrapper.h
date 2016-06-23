@@ -4,6 +4,8 @@
 #include "svm_template.h"
 #include "svm.h"
 
+using namespace libsvm;
+
 class SvmData;
 class SvmModel;
 

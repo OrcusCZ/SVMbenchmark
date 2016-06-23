@@ -9,6 +9,9 @@
 #include "initialize.h"
 #include "firstOrder.h"
 #include "secondOrder.h"
+#include <iostream>
+
+extern int g_cache_size;
 
 void formModel(float* trainingPoints, int nTrainingPoints, int nDimension, float* trainingAlpha, float* trainingLabels, float** supportVectors, int* nSV, float** alpha, float epsilon) {
   int count = 0;
@@ -181,12 +184,20 @@ void performTraining(float* data, int nPoints, int nDimension, float* labels, fl
     sizeOfCache = nPoints;
   }
 
+  //external cache size setting
+  if(g_cache_size > 0) {
+	  size_t sizeOfUserCache = ((size_t) g_cache_size << 20) / rowPitch;
+	  if (sizeOfUserCache < sizeOfCache) sizeOfCache = sizeOfUserCache;
+  }
+
 #ifdef __DEVICE_EMULATION__
   sizeOfCache = nPoints;
 #endif
 		
-  printf("%u bytes of memory found on device, %u bytes currently free\n", totalMemory, remainingMemory);
-  printf("%u rows of kernel matrix will be cached (%u bytes per row)\n", sizeOfCache, rowPitch);
+  //printf("%zu bytes of memory found on device, %zu bytes currently free\n", totalMemory, remainingMemory);
+  //printf("%zu rows of kernel matrix will be cached (%zu bytes per row)\n", sizeOfCache, rowPitch);
+  std::cout << totalMemory << " bytes of memory found on device, " << remainingMemory << " bytes currently free\n";
+  std::cout << sizeOfCache << " rows of kernel matrix will be cached (" << rowPitch << " bytes per row)\n";
 
   float* devCache;
   size_t cachePitch;

@@ -2,7 +2,7 @@
 
 #include <iostream>
 #include <stdio.h>
-#include <stdLib.h>
+#include <stdlib.h>
 #include <string.h>
 #include <cctype>
 
@@ -116,7 +116,7 @@ void LibSvmData::ConvertFromDenseData() {
 		prob->y[j] = vector_labels[j];
 		for(unsigned int i=0; i < dimVects; i++) {
 			if(data_dense[j * dimVects + i] != 0.0f) {
-				x_space[n].index = i;
+				x_space[n].index = i + 1; //libsvm: offset 1
 				x_space[n].value = data_dense[j * dimVects + i];
 				n++;
 			}
@@ -146,7 +146,7 @@ void LibSvmData::ConvertFromCSRData() {
 		prob->x[j] = &x_space[n];
 		prob->y[j] = vector_labels[j];
 		for(unsigned int i=data_csr->rowOffsets[j]; i < data_csr->rowOffsets[j+1]; i++) {
-				x_space[n].index = data_csr->colInd[i];
+				x_space[n].index = data_csr->colInd[i] + 1; //libsvm: offset 1
 				x_space[n].value = data_csr->values[i];
 				n++;
 		}

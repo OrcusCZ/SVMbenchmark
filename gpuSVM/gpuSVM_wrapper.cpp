@@ -2,15 +2,18 @@
 
 #include <iostream>
 #include <stdio.h>
-#include <stdLib.h>
+#include <stdlib.h>
 #include <cctype>
 
 using namespace std;
 
+#include "svm.h"
 #include "utils.h"
 #include "gpuSVM_wrapper.h"
 #include "svmTrain.h"
 #include "svmIO.h"
+
+using namespace libsvm;
 
 GpuSvmData::GpuSvmData() {
 	select_device(-1, 0, 0);
@@ -109,7 +112,8 @@ int GpuSvmModel::Train(SvmData *_data, struct svm_params * _params, struct svm_t
 		params->gamma = 1.0 / data->GetDimVects();
 	}
 
-	memset(&kp, 0, sizeof(struct Kernel_params));
+	//memset(&kp, 0, sizeof(struct Kernel_params));
+    kp.b = 0;
 	kp.coef0 = (float) params->coef0;
 	kp.degree = params->degree;
 	kp.gamma = (float) params->gamma;

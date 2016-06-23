@@ -31,11 +31,11 @@
 
 
 
-
 #include "cuda_helpers.hpp"
+#include "helpers.hpp"
 #include "gtsvm.h"
 
-#include <boost/cstdint.hpp>
+//#include <boost/cstdint.hpp>
 
 #include <utility>
 

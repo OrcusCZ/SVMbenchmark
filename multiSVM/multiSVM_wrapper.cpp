@@ -1,6 +1,8 @@
 #include <utils.h>
 #include <multiSVM_wrapper.h>
 
+using namespace libsvm;
+
 //from cu file
 void trainclassifier (float* h_xtraindata, int* h_ltraindata, int* h_rdata, float* h_atraindata, int ntraining, int nfeatures, int nclasses, int ntasks, float* h_C, float* h_b, float tau, int kernelcode, float beta, float a, float b, float d);
 

@@ -941,8 +941,9 @@ void SVMTrain(float *mexalpha,float* beta,float*y,float *x ,float _C, float _ker
 
 	size_t free_mem, total;
 	cuMemGetInfo(&free_mem, &total);
+    //free_mem = INT_MAX;
 
-	int KernelCacheSize=free_mem-MBtoLeave*1024*1024;
+	size_t KernelCacheSize=free_mem-MBtoLeave*1024*1024;
 	int RowsInKernelCache=KernelCacheSize/(sizeof(float)*m);
 
 	/* Do not use all memory available if not needed. */

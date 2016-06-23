@@ -92,10 +92,10 @@ template<bool iLowCompute, bool iHighCompute, class Kernel>
   float lowKernel = 0;
 	if (reduceFlag > 0) {
 		if (!iHighCompute) {
-			highKernel = devCache[(devCachePitchInFloats * iHighCacheIndex) + globalIndex];
+			highKernel = devCache[((size_t)devCachePitchInFloats * iHighCacheIndex) + globalIndex];
 		}
 		if (!iLowCompute) {
-			lowKernel = devCache[(devCachePitchInFloats * iLowCacheIndex) + globalIndex];
+			lowKernel = devCache[((size_t)devCachePitchInFloats * iLowCacheIndex) + globalIndex];
 		}
     if (iHighCompute && iLowCompute) {
       Kernel::dualKernel(devData + globalIndex, devDataPitchInFloats, devData + globalIndex + (devDataPitchInFloats * nDimension), xIHigh, 1, xILow, 1, parameterA, parameterB, parameterC, highKernel, lowKernel);
@@ -109,10 +109,10 @@ template<bool iLowCompute, bool iHighCompute, class Kernel>
 		f = f + alpha1Diff * highKernel;
 		f = f + alpha2Diff * lowKernel;
     if (iLowCompute) {
-			devCache[(devCachePitchInFloats * iLowCacheIndex) + globalIndex] = lowKernel;
+			devCache[((size_t)devCachePitchInFloats * iLowCacheIndex) + globalIndex] = lowKernel;
 		}
 		if (iHighCompute) {
-			devCache[(devCachePitchInFloats * iHighCacheIndex) + globalIndex] = highKernel;
+			devCache[((size_t)devCachePitchInFloats * iHighCacheIndex) + globalIndex] = highKernel;
 		}
 
 		devF[globalIndex] = f;

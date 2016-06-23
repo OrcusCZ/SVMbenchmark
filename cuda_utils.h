@@ -1,12 +1,204 @@
-#ifndef _CUDA_UTILS_H_
-#define _CUDA_UTILS_H_
-#include <stdio.h>
+#pragma once
+
+#include <cstdio>
+#include <algorithm>
 
 #define SUCCESS 0
 #define FAILURE 1
 
 #define TRUE 1
 #define FALSE 0
+
+#ifdef __CUDACC__
+template<typename T>
+__host__ __device__ T getgriddim(T totallen, T blockdim)
+{
+    return (totallen + blockdim - (T)1) / blockdim;
+}
+
+template<typename T>
+__host__ __device__ T rounduptomult(T x, T m)
+{
+    return ((x + m - (T)1) / m) * m;
+}
+
+template<typename T>
+__device__ T warpReduceSum(T val)
+{
+	for (int s = blockDim.x / 2; s > 0; s >>= 1)
+		val += __shfl_down(val, s);
+	return val;
+}
+
+template<typename T>
+__device__ static void swap_dev(T & a, T & b)
+{
+    T tmp = a;
+    a = b;
+    b = tmp;
+}
+
+template<typename T>
+__global__ static void kernelMemset(T * mem, T v, int n)
+{
+    int k = blockDim.x * blockIdx.x + threadIdx.x;
+
+    while (k < n)
+    {
+        mem[k] = v;
+        k += gridDim.x * blockDim.x;
+    }
+}
+
+template<typename T>
+static void memsetCuda(T * d_mem, T v, int n)
+{
+    dim3 dimBlock(256);
+    dim3 dimGrid(std::min(2048, getgriddim<int>(n, dimBlock.x)));
+    kernelMemset<T><<<dimGrid, dimBlock>>>(d_mem, v, n);
+}
+
+template<typename T>
+__device__ void blockReduceSum(T * v)
+{
+    for (int s = blockDim.x / 2; s > 0; s >>= 1)
+    {
+        if (threadIdx.x < s)
+            v[threadIdx.x] += v[threadIdx.x + s];
+        __syncthreads();
+    }
+}
+
+template<typename TVal, typename TIdx>
+__device__ static int blockMaxReduce(const TVal * v, TIdx * i)
+{
+    i[threadIdx.x] = threadIdx.x;
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1)
+    {
+        if (threadIdx.x < s)
+        {
+            if (v[i[threadIdx.x + s]] > v[i[threadIdx.x]] || (v[i[threadIdx.x + s]] == v[i[threadIdx.x]] && i[threadIdx.x + s] < i[threadIdx.x]))
+            {
+                i[threadIdx.x] = i[threadIdx.x + s];
+            }
+        }
+        __syncthreads();
+    }
+    return i[0];
+}
+
+template<typename T1, typename T2>
+__device__ void blockMinReduce2(T1 * v1, T2 * v2)
+{
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1)
+    {
+        if (threadIdx.x < s)
+        {
+            if (v1[threadIdx.x + s] < v1[threadIdx.x])
+            {
+                v1[threadIdx.x] = v1[threadIdx.x + s];
+                v2[threadIdx.x] = v2[threadIdx.x + s];
+            }
+        }
+        __syncthreads();
+    }
+}
+
+template<bool desc, typename K, typename T>
+__device__ void blockBitonicSort(K * idx, T * val)
+{
+    //int i = blockDim.x * blockIdx.x + threadIdx.x;
+    int i = threadIdx.x;
+    for (int k = 2; k <= blockDim.x; k <<= 1)
+    {
+        for (int j = k >> 1; j > 0; j >>= 1)
+        {
+            int ixj = i^j;
+            if (ixj > i)
+            {
+                if (bool(i & k) == desc)
+                {
+                    if (val[i] > val[ixj])
+                    {
+                        swap_dev(val[i], val[ixj]);
+                        swap_dev(idx[i], idx[ixj]);
+                    }
+                }
+                else
+                {
+                    if (val[i] < val[ixj])
+                    {
+                        swap_dev(val[i], val[ixj]);
+                        swap_dev(idx[i], idx[ixj]);
+                    }
+                }
+            }
+            __syncthreads();
+        }
+    }
+}
+
+template<bool desc, typename K, typename T>
+__device__ void blockBitonicSortN(K * idx, T * val, int n)
+{
+    //int i = blockDim.x * blockIdx.x + threadIdx.x;
+    for (int k = 2; k <= n; k <<= 1)
+    {
+        for (int j = k >> 1; j > 0; j >>= 1)
+        {
+            for (int i = threadIdx.x; i < n; i += blockDim.x)
+            {
+                int ixj = i^j;
+                if (ixj > i)
+                {
+                    if (bool(i & k) == desc)
+                    {
+                        if (val[i] > val[ixj])
+                        {
+                            swap_dev(val[i], val[ixj]);
+                            swap_dev(idx[i], idx[ixj]);
+                        }
+                    }
+                    else
+                    {
+                        if (val[i] < val[ixj])
+                        {
+                            swap_dev(val[i], val[ixj]);
+                            swap_dev(idx[i], idx[ixj]);
+                        }
+                    }
+                }
+            }
+            __syncthreads();
+        }
+    }
+}
+
+//inter-block synchronization stuff
+#define DEFINE_SYNC_BUFFERS(num) __device__ int d_sync_buffer[num]
+#define SYNC_BUFFER_DEF int sync_buffer_id
+#define SYNC_RESET(id) \
+do { \
+    int * p; \
+    assert_cuda(cudaGetSymbolAddress((void * *)&p, d_sync_buffer)); \
+    assert_cuda(cudaMemset(p + id, 0, sizeof(int))); \
+} while(false)
+#define SYNC_BUFFER(id) id
+
+//global synchronization, last block continue, others return
+#define WAIT_FOR_THE_FINAL_BLOCK \
+do { \
+	__threadfence(); \
+	__shared__ int value; \
+	if (threadIdx.x + threadIdx.y == 0) value = 1 + atomicAdd(d_sync_buffer + sync_buffer_id, 1); \
+	__syncthreads(); \
+	if (value < gridDim.z * gridDim.y * gridDim.x) return; \
+    if (threadIdx.x + threadIdx.y == 0) d_sync_buffer[sync_buffer_id] = 0; \
+} while (false)
+
+#endif
 
 #define CUDA_SAFE_MALLOC(MEM_PTR, SIZE) CUDA_SAFE_MFREE(*MEM_PTR) \
 if (cudaMalloc(MEM_PTR, SIZE) != cudaSuccess) { \
@@ -47,5 +239,3 @@ if (cudaFreeHost(MEM_PTR) != cudaSuccess) { \
 } \
 MEM_PTR = NULL; \
 }
-	
-#endif /* _CUDA_UTILS_H_ */

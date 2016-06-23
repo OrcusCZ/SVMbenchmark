@@ -96,14 +96,14 @@ void select_device(int device_id, unsigned int sm_limit, int is_max);
 int equals(char *str1, char *str2);
 char *next_string(char *str);
 char *next_string_spec(char *str);
-inline char *next_string_spec_space(char *str);
-inline char *next_string_spec_space_plus(char *str);
-inline char *next_string_spec_colon(char *str);
-inline char * next_eol(char * str);
-inline char *last_string_spec_colon(char *str);
-inline unsigned int strtoi_reverse(char * str);
-inline float strtof_fast(char * str, char ** end_ptr);
+char *next_string_spec_space(char *str);
+char *next_string_spec_space_plus(char *str);
+char *next_string_spec_colon(char *str);
+char * next_eol(char * str);
+char *last_string_spec_colon(char *str);
+unsigned int strtoi_reverse(char * str);
+float strtof_fast(char * str, char ** end_ptr);
 
-inline int parse_line(FILE * & fid, char * & line, char * & line_end, unsigned int & line_len);
+long long parse_line(FILE * & fid, char * & line, char * & line_end, size_t & line_len);
 
 #endif /* _UTILS_H_ */

@@ -6,7 +6,37 @@
 #include <cstdlib>
 
 #include <inttypes.h>
+#ifdef _WIN32
 #include <windows.h>
+#else
+typedef union _LARGE_INTEGER
+{
+    struct
+    {
+        uint32_t LowPart;
+        int32_t HighPart;
+    };
+    struct
+    {
+        uint32_t LowPart;
+        int32_t HighPart;
+    } u;
+    int64_t QuadPart;
+} LARGE_INTEGER, *PLARGE_INTEGER;
+static int QueryPerformanceFrequency(LARGE_INTEGER * lpFrequency)
+{
+    lpFrequency->QuadPart = 1000000000;
+    return 1;
+}
+static int QueryPerformanceCounter(LARGE_INTEGER * lpPerformanceCount)
+{
+    struct timespec t;
+    if (clock_gettime(CLOCK_MONOTONIC, &t) != 0)
+        return 0;
+    lpPerformanceCount->QuadPart = t.tv_sec * 1000000000 + t.tv_nsec;
+    return 1;
+}
+#endif
 
 struct time_struct {
 	long tv_sec;         /* seconds */

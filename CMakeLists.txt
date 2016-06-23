@@ -2,8 +2,6 @@ CMAKE_MINIMUM_REQUIRED(VERSION 3.1 FATAL_ERROR)
 PROJECT(SVMbenchmark)
 
 SET(NO_CUDA "OFF" CACHE BOOL "Don't use CUDA")
-SET(USE_SSE "ON" CACHE BOOL "Use SSE instruction set")
-SET(USE_AVX "OFF" CACHE BOOL "Use AVX instruction set, works only when SSE is enabled")
 SET(NO_BOOST "ON" CACHE BOOL "Compile without Boost even if it is available")
 
 SET(COMPILE_WITH_LIBSVM ON CACHE BOOL "Compile with LibSVM")
@@ -12,12 +10,6 @@ SET(COMPILE_WITH_CUSVM ON CACHE BOOL "Compile with CuSVM")
 SET(COMPILE_WITH_GPUSVM ON CACHE BOOL "Compile with GpuSVM")
 SET(COMPILE_WITH_MULTISVM ON CACHE BOOL "Compile with MultiSVM")
 SET(COMPILE_WITH_GTSVM ON CACHE BOOL "Compile with GTSVM")
-SET(COMPILE_WITH_ORCUSSVM OFF CACHE BOOL "Compile with OrcusSVM")
-SET(COMPILE_WITH_ORCUSSVMCPU OFF CACHE BOOL "Compile with OrcusSVM serial CPU")
-SET(COMPILE_WITH_ORCUSSVM1B OFF CACHE BOOL "Compile with Chunking OrcusSVM")
-SET(COMPILE_WITH_ORCUSSVMDP OFF CACHE BOOL "Compile with OrcusSVM with Dynamic Parallelism")
-SET(COMPILE_WITH_ACCLIBSVM OFF CACHE BOOL "Compile with AccLibSVM")
-SET(COMPILE_WITH_OPENCLSVM OFF CACHE BOOL "Compile with OpenCLSVM")
 SET(COMPILE_WITH_WUSVM ON CACHE BOOL "Compile with WuSVM")
 
 IF(NOT NO_CUDA)
@@ -29,45 +21,15 @@ IF(NOT NO_CUDA)
     ENDIF()
 ENDIF()
 
-SET(USE_CUDA_DP OFF)
-
 IF(NO_CUDA OR NOT CUDA_FOUND)
     SET(COMPILE_WITH_GPULIBSVM OFF)
     SET(COMPILE_WITH_CUSVM OFF)
     # SET(COMPILE_WITH_GPUSVM OFF)
     SET(COMPILE_WITH_MULTISVM OFF)
     SET(COMPILE_WITH_GTSVM OFF)
-    SET(COMPILE_WITH_ORCUSSVM OFF)
-    SET(COMPILE_WITH_ORCUSSVMCPU OFF)
-    SET(COMPILE_WITH_ORCUSSVM1B OFF)
-    SET(COMPILE_WITH_ORCUSSVMDP OFF)
 ELSE()
     ADD_DEFINITIONS(-DWUCUDA) #wuSVM
-    #IF(COMPILE_WITH_ORCUSSVMDP OR COMPILE_WITH_ORCUSSVM1B)
-    IF(COMPILE_WITH_ORCUSSVMDP)
-        SET(USE_CUDA_DP ON)
-    ENDIF()
-    IF(USE_CUDA_DP)
-        LIST(APPEND CUDA_NVCC_FLAGS "-arch=sm_35;--library=cublas_device")
-        SET(CUDA_SEPARABLE_COMPILATION ON)
-    ELSE()
-        LIST(APPEND CUDA_NVCC_FLAGS "-arch=sm_30")
-    ENDIF()
-ENDIF()
-
-IF(COMPILE_WITH_OPENCLSVM)
-    FIND_PACKAGE(OpenCL)
-    IF(NOT OpenCL_FOUND)
-        MESSAGE(WARNING "OpenCL not found, disabling OpenCLSVM")
-        SET(COMPILE_WITH_OPENCLSVM OFF)
-    ENDIF()
-ENDIF()
-
-IF(USE_SSE)
-    ADD_DEFINITIONS(-DUSE_SSE)
-    IF(USE_AVX)
-        ADD_DEFINITIONS(-DUSE_AVX)
-    ENDIF()
+    LIST(APPEND CUDA_NVCC_FLAGS "-arch=sm_30")
 ENDIF()
 
 # IF(COMPILE_WITH_GTSVM)
@@ -218,52 +180,7 @@ SET(multiSVM_src
     multiSVM/multiSVM_wrapper.h
 )
 
-SET(orcusSVM_src
-    orcusSVM/OrcusSvm.cu
-    orcusSVM/OrcusSvm.h
-    orcusSVM/orcusSVM_wrapper.cpp
-    orcusSVM/orcusSVM_wrapper.h
-)
-
-SET(openclSVM_src
-    openclSVM/OpenCLSvm.cpp
-    openclSVM/OpenCLSvm.h
-    openclSVM/simpleCL.cpp
-    openclSVM/simpleCL.h
-    openclSVM/openclSVM_wrapper.cpp
-    openclSVM/openclSVM_wrapper.h
-)
-
-SET(orcusSVMCPU_src
-    orcusSVMCPU/OrcusSvm.cu
-    orcusSVMCPU/OrcusSvm.h
-    orcusSVMCPU/orcusSVMCPU_wrapper.cpp
-    orcusSVMCPU/orcusSVMCPU_wrapper.h
-)
-
-SET(orcusSVM1Block_src
-    orcusSVM1Block/dev_vars.h
-    orcusSVM1Block/csr.h
-    orcusSVM1Block/csr.cu
-    orcusSVM1Block/calc_x2.h
-    orcusSVM1Block/calc_x2.cu
-    orcusSVM1Block/check_cache.h
-    orcusSVM1Block/kernels_select_ws.h
-    orcusSVM1Block/kernels_klocal.h
-    orcusSVM1Block/kernels_smo.h
-    orcusSVM1Block/kernels_daifletcher.h
-    orcusSVM1Block/OrcusSvm.cu
-    orcusSVM1Block/OrcusSvm.h
-    orcusSVM1Block/orcusSVM1Block_wrapper.cpp
-    orcusSVM1Block/orcusSVM1Block_wrapper.h
-)
-
-SET(orcusSVMDP_src
-    orcusSVMDP/OrcusSvm.cu
-    orcusSVMDP/OrcusSvm.h
-    orcusSVMDP/orcusSVMDP_wrapper.cpp
-    orcusSVMDP/orcusSVMDP_wrapper.h
-)
+ADD_DEFINITIONS(-DCPP11) #wusvm    
 
 SET(wuSVM_src
     wuSVM/wuSVM_wrapper.h
@@ -330,7 +247,7 @@ FUNCTION(SVM_SOURCE_GROUP LIBNAME)
     SOURCE_GROUP("${LIBNAME} Source Files" FILES ${SRC})
 ENDFUNCTION()
 
-FOREACH(LIBDIR accLibSVM cuSVM GPULibSVM gpuSVM gtSVM libSVM multiSVM openclSVM orcusSVM orcusSVMCPU orcusSVM1Block orcusSVMDP wuSVM)
+FOREACH(LIBDIR cuSVM GPULibSVM gpuSVM gtSVM libSVM multiSVM wuSVM)
     SVM_SOURCE_GROUP(${LIBDIR} ${${LIBDIR}_src})
 ENDFOREACH()
 #end of Visual Studio Source Group definitions
@@ -344,7 +261,6 @@ INCLUDE_DIRECTORIES(
     gpuSVM
     gtSVM
     multiSVM
-    orcusSVM
     multiSVM/src
     multiSVM/include
     gtSVM/bin
@@ -352,6 +268,7 @@ INCLUDE_DIRECTORIES(
     gpuSVM/common
     gpuSVM/include
     gpuSVM/training
+    wuSVM
 )
 IF(COMPILE_WITH_GPUSVM)
     INCLUDE_DIRECTORIES(${CUDA_COMMON_INCLUDE_DIRS})
@@ -362,9 +279,6 @@ IF(COMPILE_WITH_WUSVM)
         $ENV{IPPROOT}/include
         wuSVM
     )
-ENDIF()
-IF(COMPILE_WITH_OPENCLSVM)
-    INCLUDE_DIRECTORIES(${OpenCL_INCLUDE_DIR})
 ENDIF()
 
 FUNCTION(ADD_IMP IMP SRCVAR)
@@ -381,18 +295,8 @@ ADD_IMP(CUSVM SRC ${cuSVM_src})
 ADD_IMP(GPUSVM SRC ${gpuSVM_src})
 ADD_IMP(MULTISVM SRC ${multiSVM_src})
 # ADD_IMP(GTSVM SRC ${gtSVM_src})
-ADD_IMP(ORCUSSVM SRC ${orcusSVM_src})
-ADD_IMP(ORCUSSVMCPU SRC ${orcusSVMCPU_src})
-ADD_IMP(ORCUSSVM1B SRC ${orcusSVM1Block_src})
-ADD_IMP(ORCUSSVMDP SRC ${orcusSVMDP_src})
-ADD_IMP(ACCLIBSVM SRC ${accLibSVM_src})
-ADD_IMP(OPENCLSVM SRC ${openclSVM_src})
 ADD_IMP(WUSVM SRC ${wuSVM_src})
 
-IF(COMPILE_WITH_ACCLIBSVM)
-    #SET_SOURCE_FILES_PROPERTIES(${accLibSVM_src} PROPERTY CXX_STANDARD 11)
-    #SET_PROPERTY(SOURCE ${accLibSVM_src} PROPERTY CXX_STANDARD 11)
-ENDIF()
 IF(COMPILE_WITH_WUSVM)
     LINK_DIRECTORIES (
         $ENV{MKLROOT}/lib/intel64
@@ -413,13 +317,6 @@ ENDIF()
 CUDA_ADD_EXECUTABLE(SVMbenchmark ${SRC})
 CUDA_ADD_CUBLAS_TO_TARGET(SVMbenchmark)
 TARGET_LINK_LIBRARIES(SVMbenchmark ${CUDA_CUDA_LIBRARY})
-IF(USE_CUDA_DP)
-    GET_FILENAME_COMPONENT(CUDADEVRTPATH ${CUDA_CUDART_LIBRARY} DIRECTORY)
-    TARGET_LINK_LIBRARIES(SVMbenchmark "${CUDADEVRTPATH}/libcudadevrt.a" "${CUDADEVRTPATH}/libcublas_device.a")
-ENDIF()
-IF(COMPILE_WITH_OPENCLSVM)
-    TARGET_LINK_LIBRARIES(SVMbenchmark ${OpenCL_LIBRARY})
-ENDIF()
 IF(COMPILE_WITH_WUSVM)
     TARGET_LINK_LIBRARIES(SVMbenchmark ${MKL_MY_LIB_FILES} ${IPP_MY_LIB_FILES})
 ENDIF()

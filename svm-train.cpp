@@ -44,24 +44,6 @@ SOFTWARE.
 //#ifdef COMPILE_WITH_GTSVM
 //#include "gtSVM_wrapper.h"
 //#endif
-#ifdef COMPILE_WITH_ORCUSSVM
-#include "orcusSVM/orcusSVM_wrapper.h"
-#endif
-#ifdef COMPILE_WITH_ORCUSSVMCPU
-#include "orcusSVMCPU/orcusSVMCPU_wrapper.h"
-#endif
-#ifdef COMPILE_WITH_ORCUSSVM1B
-#include "orcusSVM1Block/orcusSVM1Block_wrapper.h"
-#endif
-#ifdef COMPILE_WITH_ORCUSSVMDP
-#include "orcusSVMDP/orcusSVMDP_wrapper.h"
-#endif
-#ifdef COMPILE_WITH_OPENCLSVM
-#include "openclSVM/openclSVM_wrapper.h"
-#endif
-#ifdef COMPILE_WITH_ACCLIBSVM
-#include "acclibSVM_wrapper.h"
-#endif
 #ifdef COMPILE_WITH_WUSVM
 #include "wuSVM_wrapper.h"
 #endif
@@ -311,54 +293,6 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
 		model = new WuSvmModel(true, true, true); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
 		return SUCCESS;
 #endif
-#ifdef COMPILE_WITH_ORCUSSVM
-    case 16:
-        printf("Using OrcusSVM...\n\n");
-        data = new OrcusSvmData;
-        model = new OrcusSvmModel;
-        return SUCCESS;
-#endif
-#ifdef COMPILE_WITH_OPENCLSVM
-    case 17:
-        printf("Using OpenCLSVM...\n\n");
-        data = new OpenCLSvmData;
-        model = new OpenCLSvmModel;
-        return SUCCESS;
-#endif
-#ifdef COMPILE_WITH_ACCLIBSVM
-    case 18:
-        printf("Using AccLibSVM...\n\n");
-        data = new AccLibSvmData;
-        model = new AccLibSvmModel;
-        return SUCCESS;
-#endif
-#ifdef COMPILE_WITH_ORCUSSVMCPU
-    case 19:
-        printf("Using OrcusSVM CPU cache...\n\n");
-        data = new OrcusSvmCPUData;
-        model = new OrcusSvmCPUModel;
-        return SUCCESS;
-    case 20:
-        printf("Using OrcusSVM CPU cache and step...\n\n");
-        g_step_on_cpu = true;
-        data = new OrcusSvmCPUData;
-        model = new OrcusSvmCPUModel;
-        return SUCCESS;
-#endif
-#ifdef COMPILE_WITH_ORCUSSVM1B
-    case 21:
-        printf("Using OrcusSVM1Block...\n\n");
-        data = new OrcusSvm1BlockData;
-        model = new OrcusSvm1BlockModel;
-        return SUCCESS;
-#endif
-#ifdef COMPILE_WITH_ORCUSSVMDP
-    case 22:
-        printf("Using OrcusSVMDP...\n\n");
-        data = new OrcusSvmDPData;
-        model = new OrcusSvmDPModel;
-        return SUCCESS;
-#endif
 	default:
         printf("Error: Invalid implementation \"%d\"!\n\n", imp);
         print_help();
@@ -419,25 +353,6 @@ void print_help() {
 		"        13   WuSVM<float, lasp, GPU> (Tyree et al.)\n"
 		"        14   WuSVM<float, pegasos, openMP> (Tyree et al.)\n"
 		"        15   WuSVM<float, pegasos, GPU> (Tyree et al.)\n"
-#endif
-#ifdef COMPILE_WITH_ORCUSSVM
-		"        16   OrcusSVM (Michalek,Vanek)\n"
-#endif
-#ifdef COMPILE_WITH_OPENCLSVM
-		"        17   OpenCLSVM (Michalek,Vanek)\n"
-#endif
-#ifdef COMPILE_WITH_ACCLIBSVM
-		"        18   AccLibSVM (Michalek,Vanek)\n"
-#endif
-#ifdef COMPILE_WITH_ORCUSSVMCPU
-        "        19   OrcusSVM CPU cache (Michalek,Vanek)\n"
-        "        20   OrcusSVM CPU cache and step (Michalek,Vanek)\n"
-#endif
-#ifdef COMPILE_WITH_ORCUSSVM1B
-        "        21   Chunking OrcusSVM (Michalek,Vanek)\n"
-#endif
-#ifdef COMPILE_WITH_ORCUSSVMDP
-        "        22   OrcusSVM with dynamic parallelism (Michalek,Vanek)\n"
 #endif
         "  b  Read input data in binary format (lasvm dense or sparse format)\n"
         "  w  Working set size (currently only for implementation 12)\n"

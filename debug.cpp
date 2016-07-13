@@ -3,7 +3,7 @@
 
 #include <cuda_runtime.h>
 #include "debug.h"
-#include "cudaerror.cuh"
+#include "cudaerror.h"
 
 #ifdef _MSC_VER
 #if _MSC_VER < 1700
@@ -49,4 +49,26 @@ void export_cuda_buffer(const void * d_data, size_t width, size_t height, size_t
     fout.close();
 
     delete [] data;
+}
+
+void import_cuda_buffer(void * d_data, size_t width, size_t height, size_t elemsize, std::string filename)
+{
+    std::cout << "[Debug] Importing CUDA buffer of size " << width << " x " << height << " x " << elemsize << " B to file '" << filename.c_str() << "'\n";
+
+    uint32_t w, h, e;
+    std::ifstream fin(filename.c_str(), std::ios::in | std::ios::binary);
+    fin.read((char *)&w, sizeof(w));
+    fin.read((char *)&h, sizeof(h));
+    fin.read((char *)&e, sizeof(e));
+    if (w == width && h == height && e == elemsize)
+    {
+        size_t datasize = width * height * elemsize;
+        char * data = new char [datasize];
+        fin.read(data, datasize);
+        assert_cuda(cudaMemcpy(d_data, data, datasize, cudaMemcpyHostToDevice));
+        delete [] data;
+    }
+    else
+        std::cerr << "[Error] Cannot import CUDA buffer, dimension mismatch\n";
+    fin.close();
 }

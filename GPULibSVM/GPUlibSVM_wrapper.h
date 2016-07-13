@@ -26,7 +26,7 @@ public:
 class GPULibSvmModel : public SvmModel {
 private:
 	float * alphas;
-	void ConvertParameters(struct svm_params * par_src, struct svm_parameter * &par_dst);
+	void ConvertParameters(struct svm_params * par_src, struct libsvm::svm_parameter * &par_dst);
 
 protected:
 	struct svm_params * params;

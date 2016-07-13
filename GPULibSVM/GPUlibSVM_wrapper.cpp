@@ -4,7 +4,7 @@
 
 #include <iostream>
 #include <stdio.h>
-#include <stdLib.h>
+#include <stdlib.h>
 #include <string.h>
 #include <cctype>
 
@@ -14,8 +14,10 @@ using namespace std;
 #include "GPUlibSVM_wrapper.h"
 #include "libSVM_utils.h"
 
+extern int g_cache_size;
+
 GPULibSvmData::GPULibSvmData() {
-	printf("Using LibSVM...\n\n");
+	//printf("Using LibSVM...\n\n");
 	prob = NULL;
 }
 
@@ -24,7 +26,7 @@ GPULibSvmData::~GPULibSvmData() {
 }
 
 int GPULibSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type) {
-
+	
 	svm_memory_dataformat req_data_format;
 	req_data_format.allocate_pinned = false;
 	req_data_format.allocate_write_combined = false;
@@ -98,7 +100,7 @@ void GPULibSvmData::ConvertFromDenseData() {
 	Delete();
 	MEM_SAFE_ALLOC(prob, struct gpulibsvm_problem, 1);
 	prob->l = numVects;
-
+	
 	////compute number of non-zeros:
 	//size_t elements = 0;
 	//for(unsigned int j=0; j < numVects; j++) {
@@ -111,7 +113,7 @@ void GPULibSvmData::ConvertFromDenseData() {
 	prob->y = Malloc(double, prob->l);
 	prob->x = Malloc(struct gpulibsvm_node, prob->l);
 	//struct gpulibsvm_node * x_space = Malloc(struct gpulibsvm_node,elements);
-
+	
 	unsigned int n = 0;
 	for(unsigned int j=0; j < numVects; j++) {
 		prob->y[j] = this->vector_labels[j];
@@ -119,7 +121,7 @@ void GPULibSvmData::ConvertFromDenseData() {
 		prob->x[j].values = Malloc(double, dimVects);
 		for(unsigned int i=0; i < dimVects; i++) prob->x[j].values[i] = data_dense[j * dimVects + i];
 	}
-
+	
 	//free dense data to save memory
 	free(data_dense);
 	data_dense = NULL;
@@ -175,7 +177,7 @@ int GPULibSvmModel::Delete() {
 		delete model;
 		model = NULL;
 	}
-
+	
 	//if (params != NULL) {
 	//	free(params);
 	//	params = NULL;
@@ -191,10 +193,10 @@ int GPULibSvmModel::Delete() {
 
 int GPULibSvmModel::Train(SvmData *_data, struct svm_params * _params, struct svm_trainingInfo *trainingInfo) {
 	unsigned int numSVs;
-	svm_parameter * libsvm_params;
+	libsvm::svm_parameter * libsvm_params;
 	GPULibSvmData *data = (GPULibSvmData *) _data;
 	params = _params;
-
+	
 	if (data == NULL) {
 		return FAILURE;
 	}
@@ -215,8 +217,8 @@ int GPULibSvmModel::Train(SvmData *_data, struct svm_params * _params, struct sv
 	return SUCCESS;
 }
 
-void GPULibSvmModel::ConvertParameters(struct svm_params * par_src, struct svm_parameter * &par_dst) {
-	par_dst = (struct svm_parameter *) malloc(sizeof(struct svm_parameter));
+void GPULibSvmModel::ConvertParameters(struct svm_params * par_src, struct libsvm::svm_parameter * &par_dst) {
+	par_dst = (struct libsvm::svm_parameter *) malloc(sizeof(struct libsvm::svm_parameter));
 
 	par_dst->C = par_src->C;
 	par_dst->eps = par_src->eps;	/* Stoping criteria */
@@ -228,8 +230,8 @@ void GPULibSvmModel::ConvertParameters(struct svm_params * par_src, struct svm_p
 	par_dst->p = par_src->p;		/* Regression parameter epsilon */
 
 	/* Default LibSVM values. */
-	par_dst->svm_type = C_SVC;
-	par_dst->cache_size = 3072; /* This was originally 100. */
+	par_dst->svm_type = libsvm::C_SVC;
+	par_dst->cache_size = g_cache_size > 0 ? g_cache_size : 3072; /* This was originally 100. */
 	par_dst->probability = 0;
 	par_dst->shrinking = 1;
 	par_dst->nr_weight = 0;

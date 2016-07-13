@@ -2,7 +2,7 @@
 
 #include <iostream>
 #include <stdio.h>
-#include <stdLib.h>
+#include <stdlib.h>
 #include <cctype>
 
 using namespace std;

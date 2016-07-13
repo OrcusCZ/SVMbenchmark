@@ -65,12 +65,12 @@ template<bool iLowCompute, bool iHighCompute, class Kernel>
 		if (iHighCompute) {
 			highKernel = 0;
 		} else {
-			highKernel = devCache[(devCachePitchInFloats * iHighCacheIndex) + globalIndex];
+			highKernel = devCache[((size_t)devCachePitchInFloats * iHighCacheIndex) + globalIndex];
 		}
 		if (iLowCompute) {
 			lowKernel = 0;
 		} else {
-			lowKernel = devCache[(devCachePitchInFloats * iLowCacheIndex) + globalIndex];
+			lowKernel = devCache[((size_t)devCachePitchInFloats * iLowCacheIndex) + globalIndex];
 		}
 
     if (iHighCompute && iLowCompute) {
@@ -85,10 +85,10 @@ template<bool iLowCompute, bool iHighCompute, class Kernel>
 		f = f + alpha2Diff * lowKernel;
 		
 		if (iLowCompute) {
-			devCache[(devCachePitchInFloats * iLowCacheIndex) + globalIndex] = lowKernel;
+			devCache[((size_t)devCachePitchInFloats * iLowCacheIndex) + globalIndex] = lowKernel;
 		}
 		if (iHighCompute) {
-			devCache[(devCachePitchInFloats * iHighCacheIndex) + globalIndex] = highKernel;
+			devCache[((size_t)devCachePitchInFloats * iHighCacheIndex) + globalIndex] = highKernel;
 		}
     devF[globalIndex] = f;
 	}
@@ -187,12 +187,12 @@ template <bool iHighCompute, class Kernel>
 		if (iHighCompute) {
 			highKernel = 0;
 		} else {
-			highKernel = devCache[(devCachePitchInFloats * iHighCacheIndex) + globalIndex];
+			highKernel = devCache[((size_t)devCachePitchInFloats * iHighCacheIndex) + globalIndex];
 		}
 		
     if (iHighCompute) {
       highKernel = Kernel::kernel(devData + globalIndex, devDataPitchInFloats, devData + globalIndex + (devDataPitchInFloats * nDimension), xIHigh, 1, parameterA, parameterB, parameterC);
-      devCache[(devCachePitchInFloats * iHighCacheIndex) + globalIndex] = highKernel;
+      devCache[((size_t)devCachePitchInFloats * iHighCacheIndex) + globalIndex] = highKernel;
     }
 
     
@@ -330,7 +330,7 @@ __global__ void secondOrderPhaseFour(float* devLabels, float* devKernelDiag, flo
     
     float eta = devKernelDiag[iHigh] + devKernelDiag[iLow];
    
-    eta = eta - 2 * (*(devCache + (devCachePitchInFloats * iHighCacheIndex) + iLow));
+    eta = eta - 2 * (*(devCache + ((size_t)devCachePitchInFloats * iHighCacheIndex) + iLow));
    
     
     float alpha1Old = devAlpha[iHigh];

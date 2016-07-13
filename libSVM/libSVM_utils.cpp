@@ -9,6 +9,7 @@
 #include "utils.h"
 #include "libSVM_utils.h"
 
+using namespace libsvm;
 struct svm_parameter param;		// set by parse_command_line
 struct svm_problem prob;		// set by read_problem
 struct svm_node *x_space;

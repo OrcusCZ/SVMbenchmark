@@ -34,10 +34,7 @@
 #include "cuda.hpp"
 #include "helpers.hpp"
 
-#include <boost/shared_array.hpp>
-#include <boost/assert.hpp>
-#include <boost/static_assert.hpp>
-#include <boost/cstdint.hpp>
+#include "boost_headers.h"
 
 #include <map>
 #include <vector>

@@ -2,21 +2,55 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef COMPILE_WITH_LIBSVM
 #include "libSVM_wrapper.h"
-#ifndef __NO_CUDA
-#include "GPULibSVM_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_GPULIBSVM
+#include "GPUlibSVM_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_CUSVM
 #include "cuSVM_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_GPUSVM
 #include "gpuSVM_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_MULTISVM
 #include "multiSVM_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_GTSVM
 #include "gtSVM_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_ORCUSSVM
 #include "orcusSVM/orcusSVM_wrapper.h"
 #endif
+#ifdef COMPILE_WITH_ORCUSSVMCPU
+#include "orcusSVMCPU/orcusSVMCPU_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_ORCUSSVM1B
+#include "orcusSVM1Block/orcusSVM1Block_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_ORCUSSVMDP
+#include "orcusSVMDP/orcusSVMDP_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_OPENCLSVM
 #include "openclSVM/openclSVM_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_ACCLIBSVM
+#include "acclibSVM_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_WUSVM
+#include "wuSVM_wrapper.h"
+#endif
 
 #include "utils.h"
-#include "stopwatch.h"
+#include "svm.h"
+#include "my_stopwatch.h"
+
+using namespace libsvm;
 
 int g_cache_size = 0;
+bool g_step_on_cpu = false;
+int g_ws_size = 0;
 
 int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_params * params, SVM_FILE_TYPE *file_type, SVM_DATA_TYPE *data_type, SVM_MODEL_FILE_TYPE *model_file_type);
 
@@ -26,7 +60,7 @@ int main(int argc, char **argv) {
     SVM_FILE_TYPE file_type = LIBSVM_TXT;
     SVM_DATA_TYPE data_type = UNKNOWN;
     SVM_MODEL_FILE_TYPE model_file_type = M_LIBSVM_TXT;
-    StopWatch clAll, clLoad, clProc, clStore;
+    MyStopWatch clAll, clLoad, clProc, clStore;
     SvmData *data;
     SvmModel *model;
 
@@ -37,7 +71,7 @@ int main(int argc, char **argv) {
 
     clAll.start();
 
-    /* Load data. */
+    /* Load data. */ 
     clLoad.start();
     if(data->Load(argv[1], file_type, data_type) != SUCCESS) {
         return EXIT_FAILURE;
@@ -90,11 +124,11 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
 
     if (argc >= INPUT_ARGS_MIN) {
         for (i = INPUT_ARGS_MIN; i < argc; i++) {
-            if (argv[i][0] != '-' || (i + 1) == argc) {
+            if (argv[i][0] != '-' || (argv[i][1] != 'b' && (i + 1) == argc)) {
                 print_help();
                 return FAILURE;
             }
-
+            
             switch (argv[i++][1]) {
             case 'k':
                 switch (argv[i][0]) {
@@ -143,6 +177,9 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
             case 'r':
                 g_cache_size = atoi(argv[i]);
                 break;
+            case 'w':
+                g_ws_size = atoi(argv[i]);
+                break;
             case 'b':
                 *file_type = LASVM_BINARY;
                 i--;
@@ -160,48 +197,145 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
     }
 
     switch (imp) {
+#ifdef COMPILE_WITH_LIBSVM
     case 1:
         data = new LibSvmData;
         model = new LibSvmModel;
         return SUCCESS;
-#ifndef __NO_CUDA
+#endif
+#ifdef COMPILE_WITH_GPULIBSVM
     case 2:
         printf("Using GPU-LibSVM (Athanasopoulos)...\n\n");
         data = new GPULibSvmData;
         model = new GPULibSvmModel;
         return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_CUSVM
     case 3:
         printf("Using cuSVM (Carpenter)...\n\n");
         data = new CuSvmData;
         model = new CuSvmModel;
         return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_GPUSVM
     case 4:
         printf("Using gpuSVM (Catanzaro)...\n\n");
         data = new GpuSvmData;
         model = new GpuSvmModel;
         return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_MULTISVM
     case 5:
         printf("Using multiSVM (Herrero-Lopez)...\n\n");
         data = new MultiSvmData;
         model = new MultiSvmModel;
         return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_GTSVM
     case 6:
-        printf("Using gtSVM (Andrew Cotter)...\n\n");
+        printf("Using gtSVM(large clusters) (Andrew Cotter)...\n\n");
         data = new GtSvmData;
-        model = new GtSvmModel;
+        model = new GtSvmModel(false);
         return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_ORCUSSVM
     case 7:
         printf("Using OrcusSVM...\n\n");
         data = new OrcusSvmData;
         model = new OrcusSvmModel;
         return SUCCESS;
-#endif //NO_CUDA
+#endif
+#ifdef COMPILE_WITH_OPENCLSVM
     case 8:
         printf("Using OpenCLSVM...\n\n");
         data = new OpenCLSvmData;
         model = new OpenCLSvmModel;
         return SUCCESS;
-    default:
+#endif
+#ifdef COMPILE_WITH_ACCLIBSVM
+    case 9:
+        printf("Using AccLibSVM...\n\n");
+        data = new AccLibSvmData;
+        model = new AccLibSvmModel;
+        return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_ORCUSSVMCPU
+    case 10:
+        printf("Using OrcusSVM CPU cache...\n\n");
+        data = new OrcusSvmCPUData;
+        model = new OrcusSvmCPUModel;
+        return SUCCESS;
+    case 11:
+        printf("Using OrcusSVM CPU cache and step...\n\n");
+        g_step_on_cpu = true;
+        data = new OrcusSvmCPUData;
+        model = new OrcusSvmCPUModel;
+        return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_ORCUSSVM1B
+    case 12:
+        printf("Using OrcusSVM1Block...\n\n");
+        data = new OrcusSvm1BlockData;
+        model = new OrcusSvm1BlockModel;
+        return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_ORCUSSVMDP
+    case 13:
+        printf("Using OrcusSVMDP...\n\n");
+        data = new OrcusSvmDPData;
+        model = new OrcusSvmDPModel;
+        return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_GTSVM
+	case 16:
+		printf("Using gtSVM(small clusters) (Andrew Cotter)...\n\n");
+		data = new GtSvmData;
+		model = new GtSvmModel(true);
+		return SUCCESS;
+#endif
+#ifdef COMPILE_WITH_WUSVM
+	case 21:
+		printf("Using WuLibSVM<double, lasp, openMP>...\n\n");
+		data = new WuSvmData;
+		model = new WuSvmModel(false, false, false); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
+		return SUCCESS;
+	case 22:
+		printf("Using WuLibSVM<double, lasp, GPU>...\n\n");
+		data = new WuSvmData;
+		model = new WuSvmModel(false, false, true); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
+		return SUCCESS;
+	case 23:
+		printf("Using WuLibSVM<double, pegasos, openMP>...\n\n");
+		data = new WuSvmData;
+		model = new WuSvmModel(false, true, false); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
+		return SUCCESS;
+	case 24:
+		printf("Using WuLibSVM<double, pegasos, GPU>...\n\n");
+		data = new WuSvmData;
+		model = new WuSvmModel(false, true, true); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
+		return SUCCESS;
+	case 25:
+		printf("Using WuLibSVM<float, lasp, openMP>...\n\n");
+		data = new WuSvmData;
+		model = new WuSvmModel(true, false, false); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
+		return SUCCESS;
+	case 26:
+		printf("Using WuLibSVM<float, lasp, GPU>...\n\n");
+		data = new WuSvmData;
+		model = new WuSvmModel(true, false, true); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
+		return SUCCESS;
+	case 27:
+		printf("Using WuLibSVM<float, pegasos, openMP>...\n\n");
+		data = new WuSvmData;
+		model = new WuSvmModel(true, true, false); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
+		return SUCCESS;
+	case 28:
+		printf("Using WuLibSVM<float, pegasos, GPU>...\n\n");
+		data = new WuSvmData;
+		model = new WuSvmModel(true, true, true); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
+		return SUCCESS;
+#endif
+	default:
         printf("Error: Invalid implementation \"%d\"!\n\n", imp);
         print_help();
         return FAILURE;
@@ -232,13 +366,58 @@ void print_help() {
         "  g  Kernel parameter gamma.\n"
         "  f  Kernel parameter coef0.\n"
         "  i  Select implementation to use. Corresponding values:\n"
+#ifdef COMPILE_WITH_LIBSVM
         "         1   LibSVM (default)\n"
+#endif
+#ifdef COMPILE_WITH_GPULIBSVM
         "         2   GPU-LibSVM (Athanasopoulos)\n"
+#endif
+#ifdef COMPILE_WITH_CUSVM
         "         3   CuSVM (Carpenter)\n"
+#endif
+#ifdef COMPILE_WITH_GPUSVM
         "         4   GpuSVM (Catanzaro)\n"
+#endif
+#ifdef COMPILE_WITH_MULTISVM
         "         5   MultiSVM (Herrero-Lopez)\n"
-        "         6   GTSVM (Andrew Cotter)\n"
-        "         7   OrcusSVM\n"
+#endif
+#ifdef COMPILE_WITH_GTSVM
+        "         6   GTSVM - large clusters (Andrew Cotter)\n"
+#endif
+#ifdef COMPILE_WITH_ORCUSSVM
+		"         7   OrcusSVM (Michalek,Vanek)\n"
+#endif
+#ifdef COMPILE_WITH_OPENCLSVM
+		"         8   OpenCLSVM (Michalek,Vanek)\n"
+#endif
+#ifdef COMPILE_WITH_ACCLIBSVM
+		"         9   AccLibSVM (Michalek,Vanek)\n"
+#endif
+#ifdef COMPILE_WITH_ORCUSSVMCPU
+        "        10   OrcusSVM CPU cache (Michalek,Vanek)\n"
+        "        11   OrcusSVM CPU cache and step (Michalek,Vanek)\n"
+#endif
+#ifdef COMPILE_WITH_ORCUSSVM1B
+        "        12   Chunking OrcusSVM (Michalek,Vanek)\n"
+#endif
+#ifdef COMPILE_WITH_ORCUSSVMDP
+        "        13   OrcusSVM with dynamic parallelism (Michalek,Vanek)\n"
+#endif
+#ifdef COMPILE_WITH_GTSVM
+		"        16   GTSVM - small clusters (Andrew Cotter)\n"
+#endif
+#ifdef COMPILE_WITH_WUSVM
+		"        21   WuSVM<double, lasp, openMP> (Tyree et al.)\n"
+		"        22   WuSVM<double, lasp, GPU> (Tyree et al.)\n"
+		"        23   WuSVM<double, pegasos, openMP> (Tyree et al.)\n"
+		"        24   WuSVM<double, pegasos, GPU> (Tyree et al.)\n"
+		"        25   WuSVM<float, lasp, openMP> (Tyree et al.)\n"
+		"        26   WuSVM<float, lasp, GPU> (Tyree et al.)\n"
+		"        27   WuSVM<float, pegasos, openMP> (Tyree et al.)\n"
+		"        28   WuSVM<float, pegasos, GPU> (Tyree et al.)\n"
+#endif
         "  b  Read input data in binary format (lasvm dense or sparse format)\n"
+        "  w  Working set size (currently only for implementation 12)\n"
+        "  r  Cache size in MB\n"
         );
 }

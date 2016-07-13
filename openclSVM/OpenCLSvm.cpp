@@ -1,3 +1,4 @@
+#define NOMINMAX
 #include <iostream>
 #include <fstream>
 #include <ctime>
@@ -5,10 +6,10 @@
 #include <vector>
 #include <cfloat>
 
-
 #include "simpleCL.h"
-#include "stopwatch.h"
+#include "my_stopwatch.h"
 #include "OpenCLSvm.h"
+
 
 
 #ifndef HAVE_NULLPTR
@@ -381,11 +382,11 @@ void OpenCLSvmTrain(float * alpha, float * rho, bool sparse, const float * x, co
     bool useShrinking = false;
     size_t reduce_block_size = NUM_THREADS;
     size_t reduce_buff_size = ALIGN_UP(num_vec, reduce_block_size);
-    size_t ones_size = max(num_vec_aligned, dim_aligned);
+    size_t ones_size = std::max(num_vec_aligned, dim_aligned);
     size_t cache_size_mb = g_cache_size;
 	int cacheUpdateCnt = 0;
 
-	StopWatch cl;
+	MyStopWatch cl;
 	cl.start();
 
 	int gpu_found;
@@ -401,7 +402,7 @@ void OpenCLSvmTrain(float * alpha, float * rho, bool sparse, const float * x, co
 		cache_size_mb = OCL_CACHE_SIZE_MB; //~ to fit in 1GB, OpenCL doesn't have gpu free memory functions
     }
     unsigned int cache_rows = (unsigned int) (cache_size_mb * 1024 * 1024 / (num_vec_aligned * sizeof(float)));
-	cache_rows = min(cache_rows, num_vec);
+	cache_rows = std::min(cache_rows, num_vec);
 
     std::cout << "Training data: " << (sparse ? "sparse" : "dense") << std::endl;
     std::cout << "Data size: " << num_vec << "\nDimension: " << dim << std::endl;

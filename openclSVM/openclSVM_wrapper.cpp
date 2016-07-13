@@ -1,5 +1,5 @@
 #include "openclSVM_wrapper.h"
-#include "openclSvm.h"
+#include "OpenCLSvm.h"
 #include "../utils.h"
 
 int OpenCLSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type)

@@ -2,7 +2,7 @@
 
 #include <iostream>
 #include <stdio.h>
-#include <stdLib.h>
+#include <stdlib.h>
 #include <string.h>
 #include <cctype>
 
@@ -11,6 +11,8 @@ using namespace std;
 #include "utils.h"
 #include "libSVM_wrapper.h"
 #include "libSVM_utils.h"
+
+extern int g_cache_size;
 
 LibSvmData::LibSvmData() {
 	printf("Using LibSVM...\n\n");
@@ -116,7 +118,7 @@ void LibSvmData::ConvertFromDenseData() {
 		prob->y[j] = vector_labels[j];
 		for(unsigned int i=0; i < dimVects; i++) {
 			if(data_dense[j * dimVects + i] != 0.0f) {
-				x_space[n].index = i;
+				x_space[n].index = i + 1; //libsvm: offset 1
 				x_space[n].value = data_dense[j * dimVects + i];
 				n++;
 			}
@@ -146,7 +148,7 @@ void LibSvmData::ConvertFromCSRData() {
 		prob->x[j] = &x_space[n];
 		prob->y[j] = vector_labels[j];
 		for(unsigned int i=data_csr->rowOffsets[j]; i < data_csr->rowOffsets[j+1]; i++) {
-				x_space[n].index = data_csr->colInd[i];
+				x_space[n].index = data_csr->colInd[i] + 1; //libsvm: offset 1
 				x_space[n].value = data_csr->values[i];
 				n++;
 		}
@@ -235,7 +237,7 @@ void LibSvmModel::ConvertParameters(struct svm_params * par_src, struct svm_para
 
 	/* Default LibSVM values. */
 	par_dst->svm_type = C_SVC;
-	par_dst->cache_size = 3072; /* This was originally 100. */
+	par_dst->cache_size = g_cache_size > 0 ? g_cache_size : 3072; /* This was originally 100. */
 	par_dst->probability = 0;
 	par_dst->shrinking = 1;
 	par_dst->nr_weight = 0;

@@ -46,18 +46,7 @@
 #include "cuda.hpp"
 #include "helpers.hpp"
 
-
-#include <boost/math/special_functions.hpp>
-#include <boost/type_traits.hpp>
-#include <boost/bind.hpp>
-#include <boost/function.hpp>
-#include <boost/shared_ptr.hpp>
-#include <boost/shared_array.hpp>
-#include <boost/assert.hpp>
-#include <boost/static_assert.hpp>
-#include <boost/cstdint.hpp>
-#include <boost/version.hpp>
-
+#include "boost_headers.h"
 
 #include <string>
 #include <map>

@@ -29,9 +29,7 @@
 
 
 
-
-#include <boost/static_assert.hpp>
-#include <boost/cstdint.hpp>
+#include "boost_helpers.h"
 
 #include <cmath>
 

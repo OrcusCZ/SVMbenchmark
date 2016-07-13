@@ -69,7 +69,7 @@ struct gpulibsvm_problem
 // 
 struct gpulibsvm_model
 {
-	struct svm_parameter param;	/* parameter */
+	struct libsvm::svm_parameter param;	/* parameter */
 	int nr_class;		/* number of classes, = 2 in regression/one class svm */
 	int l;			/* total #SV */
 #ifdef _DENSE_REP
@@ -93,8 +93,8 @@ struct gpulibsvm_model
 				/* 0 if svm_model is created by svm_train */
 };
 
-struct gpulibsvm_model *gpulibsvm_train(const struct gpulibsvm_problem *prob, const struct svm_parameter *param);
-void gpulibsvm_cross_validation(const struct gpulibsvm_problem *prob, const struct svm_parameter *param, int nr_fold, double *target);
+struct gpulibsvm_model *gpulibsvm_train(const struct gpulibsvm_problem *prob, const struct libsvm::svm_parameter *param);
+void gpulibsvm_cross_validation(const struct gpulibsvm_problem *prob, const struct libsvm::svm_parameter *param, int nr_fold, double *target);
 
 int gpulibsvm_save_model(const char *model_file_name, const struct gpulibsvm_model *model);
 //struct svm_model *svm_load_model(const char *model_file_name);

@@ -5,6 +5,6 @@ static char* readline(FILE *input);
 
 void read_problem(const char *filename);
 
-void load_problem(struct svm_problem * &problem);
+void load_problem(struct libsvm::svm_problem * &problem);
 
 #endif /* _LIBSVM_UTILS_H_ */

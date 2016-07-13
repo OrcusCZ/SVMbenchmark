@@ -8,12 +8,19 @@
 #include <cuda.h>
 #include <cublas_v2.h>
 #include "OrcusSvm.h"
-#include "cudaerror.cuh"
-#include "debug.h"
+#include "../cudaerror.h"
+#include "../debug.h"
+
+#if __cplusplus <= 199711L
+#define nullptr NULL
+#endif
+
+//#define USE_TRANSPOSED_X
+//#define USE_COMBINED_UPDATEG
 
 extern int g_cache_size;
 
-static struct csr {
+struct csr {
 	unsigned int nnz;
 	unsigned int numRows;
 	unsigned int numCols;
@@ -22,7 +29,7 @@ static struct csr {
 	unsigned int *rowOffsets;
 };
 
-static struct csr_gpu {
+struct csr_gpu {
 	unsigned int nnz;
 	unsigned int numRows;
 	unsigned int numCols;
@@ -31,8 +38,6 @@ static struct csr_gpu {
 	unsigned int *rowOffsets;
     unsigned int *rowLen;
 };
-
-const csr * g_csr;
 
 template<typename T>
 T getgriddim(T totallen, T blockdim)
@@ -48,12 +53,88 @@ T rounduptomult(T x, T m)
 
 #define DENSE_TILE_SIZE 16
 
+namespace OrcusSVM
+{
 //init this to 0
 __device__ int d_shrunkSize;
 //init this to 0
 __device__ int d_nonshrunkSize;
 __device__ float2 d_shrinkMaxF;
 __device__ int d_alphaStatusChange[2];
+
+__device__ int d_cacheUpdateCnt;
+//contains changes to KCacheRemapIdx buffer, which should be written after kernelCheckCache ends
+//each change to buffer is contained in int2 variable (x,y) such that
+//KCacheRemapIdx[x] = y
+//pair at index [2] is for KCacheRowPriority
+__device__ int2 d_KCacheChanges[3];
+
+__device__ int d_cacheRow;
+}
+
+using namespace OrcusSVM;
+
+#define DIV_ALIGNED(x, y) ((x)/(y) + ((x)%(y)>0))
+__inline__ __device__
+float warpAllReduceSum(float val) {
+	for (int mask = warpSize / 2; mask > 0; mask /= 2)
+		val += __int_as_float(__shfl_xor(__float_as_int(val), mask));
+	return val;
+}
+
+template<int UNROLL, int NUM_THREADS_Y, int ROWS_AT_ONCE>
+static __global__ void kernelCalcKernelRow(const float * d_matrix, const int * i_ptr, int dim, int num_vec, int num_vec_aligned, float * K, float gamma, const float * x2) {
+
+	//load the entire vector
+	//for (int i = threadIdx.x; i < dim; i += warpSize) sh_vector[i] = d_vector[i];
+    int cacheRow = d_cacheRow;
+    if (cacheRow < 0)
+        return;
+    float * result = K + (size_t)cacheRow * num_vec_aligned;
+
+    const float * d_vector = d_matrix + dim * *i_ptr;
+	float vector[UNROLL];
+    for (int i = 0; i < UNROLL - 1; i++) vector[i] = d_vector[i * warpSize + threadIdx.x];
+    vector[UNROLL - 1] = ((UNROLL - 1) * warpSize + threadIdx.x < dim) ? d_vector[UNROLL * warpSize - warpSize + threadIdx.x] : 0;
+
+	//in registry accumulation
+	float acc[ROWS_AT_ONCE];
+
+	int rowOffset = ROWS_AT_ONCE * (blockIdx.x *  NUM_THREADS_Y + threadIdx.y);
+	d_matrix += dim * rowOffset;
+
+	if (blockIdx.x + 1 < gridDim.x) {
+		#pragma unroll
+		for (int i = 0; i < ROWS_AT_ONCE; i++) {
+			acc[i] = vector[0] * d_matrix[threadIdx.x + i * dim];
+			#pragma unroll
+			for (int u = 1; u < UNROLL; u++) {
+				acc[i] += vector[u] * d_matrix[u * warpSize + threadIdx.x + i * dim];
+			}
+		}
+	}
+	else {
+		for (int i = 0; i < min(ROWS_AT_ONCE, num_vec - rowOffset); i++) {
+			acc[i] = vector[0] * d_matrix[threadIdx.x + i * dim];
+			for (int u = 1; u < UNROLL - 1; u++) {
+				acc[i] += vector[u] * d_matrix[u * warpSize + threadIdx.x + i * dim];
+			}
+			int lastDimId = UNROLL * warpSize - warpSize + threadIdx.x;
+			if (lastDimId  < dim) acc[i] += vector[UNROLL - 1] * d_matrix[lastDimId + i * dim];
+		}
+	}
+
+#pragma unroll
+	for (int i = 0; i < ROWS_AT_ONCE; i++) {
+		acc[i] = warpAllReduceSum(acc[i]);
+	}
+	int id = rowOffset + threadIdx.x;
+	if (id < num_vec && threadIdx.x < ROWS_AT_ONCE)
+    {
+        float sum = x2[*i_ptr] + x2[id] - 2 * acc[threadIdx.x];
+        result[id] = __expf(-gamma * sum);
+    }
+}
 
 template<typename T>
 __device__ void swap_dev(T & a, T & b)
@@ -64,7 +145,7 @@ __device__ void swap_dev(T & a, T & b)
 }
 
 template<typename T>
-__global__ void kernelMemset(T * mem, T v, int n)
+__global__ static void kernelMemset(T * mem, T v, int n)
 {
     int k = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -76,14 +157,14 @@ __global__ void kernelMemset(T * mem, T v, int n)
 }
 
 template<typename T>
-void memsetCuda(T * d_mem, T v, int n)
+static void memsetCuda(T * d_mem, T v, int n)
 {
     dim3 dimBlock(256);
     dim3 dimGrid(std::min(2048, getgriddim<int>(n, dimBlock.x)));
     kernelMemset<T><<<dimGrid, dimBlock>>>(d_mem, v, n);
 }
 
-__global__ void kernelCalcRowLen(unsigned int * rowLen, const unsigned int * rowOffsets, int numRows)
+__global__ static void kernelCalcRowLen(unsigned int * rowLen, const unsigned int * rowOffsets, int numRows)
 {
     int k = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -93,7 +174,7 @@ __global__ void kernelCalcRowLen(unsigned int * rowLen, const unsigned int * row
     }
 }
 
-__global__ void kernelPow2(float * x2, const float * x, int w, int h, int pitch)
+__global__ static void kernelPow2(float * x2, const float * x, int w, int h, int pitch)
 {
     int i = blockDim.x * blockIdx.x + threadIdx.x,
         j = blockDim.y * blockIdx.y + threadIdx.y;
@@ -106,7 +187,7 @@ __global__ void kernelPow2(float * x2, const float * x, int w, int h, int pitch)
     }
 }
 
-__global__ void kernelPow2SumSparse(csr_gpu x, float * x2)
+__global__ static void kernelPow2SumSparse(csr_gpu x, float * x2)
 {
     int k = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -125,7 +206,7 @@ __global__ void kernelPow2SumSparse(csr_gpu x, float * x2)
     }
 }
 
-void computeX2Dense(const float * d_x, float * d_x2sum, int num_vec, int num_vec_aligned, int dim, int dim_aligned, cublasHandle_t cublas)
+static void computeX2Dense(const float * d_x, float * d_x2sum, int num_vec, int num_vec_aligned, int dim, int dim_aligned, cublasHandle_t cublas)
 {
     float *d_x2 = nullptr,
         *d_ones = nullptr;
@@ -143,20 +224,20 @@ void computeX2Dense(const float * d_x, float * d_x2sum, int num_vec, int num_vec
     assert_cuda(cudaFree(d_x2));
 }
 
-void computeX2Sparse(csr_gpu & x, float * d_x2)
+static void computeX2Sparse(csr_gpu & x, float * d_x2)
 {
     dim3 dimBlock(256);
     dim3 dimGrid(std::min(256, getgriddim<int>(x.numRows, dimBlock.x)));
     kernelPow2SumSparse<<<dimGrid, dimBlock>>>(x, d_x2);
 }
 
-void computeKDiag(float * d_KDiag, int num_vec)
+static void computeKDiag(float * d_KDiag, int num_vec)
 {
     //K[i,i] is always 1 for RBF kernel, let's just use memset here
     memsetCuda<float>(d_KDiag, 1, num_vec);
 }
 
-__global__ void kernelSelectI(float * valbuf, int * idxbuf, const float * y, const float * g, const float * alpha, float C, int num_vec)
+__global__ static void kernelSelectI(float * valbuf, int * idxbuf, const float * y, const float * g, const float * alpha, float C, int num_vec)
 {
     extern __shared__ float sval[];
     int * sidx = (int *)(sval + blockDim.x);
@@ -204,8 +285,63 @@ __global__ void kernelSelectI(float * valbuf, int * idxbuf, const float * y, con
     }
 }
 
+__global__ static void kernelSelectIUpdateG(float * valbuf, int * idxbuf, const float * y, float * g, const float * alpha, const float * lambda, const int * ws, float C, int num_vec, int num_vec_aligned, const float * K, const int * KCacheRemapIdx)
+{
+    extern __shared__ float sval[];
+    int * sidx = (int *)(sval + blockDim.x);
+
+    float max_val = -FLT_MAX;
+    int max_idx = 0;
+
+    int i = ws[0];
+    int j = ws[1];
+    int i_cache_row = KCacheRemapIdx[i];
+    int j_cache_row = KCacheRemapIdx[j];
+
+    for (int k = blockDim.x * blockIdx.x + threadIdx.x; k < num_vec; k += gridDim.x * blockDim.x)
+    {
+        float v;
+        float y_ = y[k];
+        float a_ = alpha[k];
+        float g_ = g[k] + *lambda * y_ * (K[(size_t)num_vec_aligned * j_cache_row + k] - K[(size_t)num_vec_aligned * i_cache_row + k]);
+        g[k] = g_;
+        if ((y_ == 1 && a_ < C) || (y_ == -1 && a_ > 0))
+            v = y_ * g_;
+        else
+            v = -FLT_MAX;
+        if (v > max_val)
+        {
+            max_val = v;
+            max_idx = k;
+        }
+    }
+
+    sval[threadIdx.x] = max_val;
+    sidx[threadIdx.x] = max_idx;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1)
+    {
+        if (threadIdx.x < s)
+        {
+            if (sval[threadIdx.x + s] > sval[threadIdx.x])
+            {
+                sval[threadIdx.x] = sval[threadIdx.x + s];
+                sidx[threadIdx.x] = sidx[threadIdx.x + s];
+            }
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0)
+    {
+        valbuf[blockIdx.x] = sval[0];
+        idxbuf[blockIdx.x] = sidx[0];
+    }
+}
+
 //first order search
-__global__ void kernelSelectJ1(float * valbuf, int * idxbuf, const float * y, const float * g, const float * alpha, float C, int num_vec)
+__global__ static void kernelSelectJ1(float * valbuf, int * idxbuf, const float * y, const float * g, const float * alpha, float C, int num_vec)
 {
     extern __shared__ float sval[];
     int * sidx = (int *)(sval + blockDim.x);;
@@ -254,7 +390,7 @@ __global__ void kernelSelectJ1(float * valbuf, int * idxbuf, const float * y, co
 }
 
 //second order search with cached K
-__global__ void kernelSelectJCached(float * valbuf, int * idxbuf, const float * y, const float * g, const float * alpha, float C, int num_vec, int num_vec_aligned, const int * i_ptr, const float * K, const float * KDiag, const int * KCacheRemapIdx)
+__global__ static void kernelSelectJCached(float * valbuf, int * idxbuf, const float * y, const float * g, const float * alpha, float C, int num_vec, int num_vec_aligned, const int * i_ptr, const float * K, const float * KDiag, const int * KCacheRemapIdx)
 {
     extern __shared__ float sval[];
     int * sidx = (int *)(sval + blockDim.x);
@@ -272,7 +408,7 @@ __global__ void kernelSelectJCached(float * valbuf, int * idxbuf, const float * 
         float th = y[i] * g[i];
         if (((y_ == 1 && a_ > 0) || (y_ == -1 && a_ < C)) && th > y[k] * g[k])
         {
-            float den = KDiag[i] + KDiag[k] - 2 * K[num_vec_aligned * cache_row + k];
+            float den = KDiag[i] + KDiag[k] - 2 * K[(size_t)num_vec_aligned * cache_row + k];
             float v = th - y[k] * g[k];
             val = v * v / den;
         }
@@ -310,7 +446,7 @@ __global__ void kernelSelectJCached(float * valbuf, int * idxbuf, const float * 
 }
 
 //assume grid size (1)
-__global__ void kernelReduceMaxIdx(float * val, int * idx, int * idx_out, int len)
+__global__ static void kernelReduceMaxIdx(float * val, int * idx, int * idx_out, int len)
 {
     extern __shared__ float sval[];
     int * sidx = (int *)(sval + blockDim.x);
@@ -349,7 +485,7 @@ __global__ void kernelReduceMaxIdx(float * val, int * idx, int * idx_out, int le
         idx_out[0] = sidx[0];
 }
 
-void reduceMaxIdx(float * d_val, int * d_idx, int * d_result, int len, int reduce_block_size)
+static void reduceMaxIdx(float * d_val, int * d_idx, int * d_result, int len, int reduce_block_size)
 {
     //dim3 dimBlock(reduce_block_size);
     //dim3 dimGrid(std::min(reduce_block_size, getgriddim(len, (int)dimBlock.x)));
@@ -362,18 +498,18 @@ void reduceMaxIdx(float * d_val, int * d_idx, int * d_result, int len, int reduc
     kernelReduceMaxIdx<<<dimGrid, dimBlock, dimBlock.x * sizeof(float) + dimBlock.x * sizeof(int)>>>(d_val, d_idx, d_result, getgriddim(len, (int)dimBlock.x));
 }
 
-__global__ void kernelUpdateg(float * g, const float * lambda, const float * y, const float * K, const int * ws, int num_vec, int num_vec_aligned)
+__global__ static void kernelUpdateg(float * g, const float * lambda, const float * y, const float * K, const int * ws, int num_vec, int num_vec_aligned)
 {
     int i = ws[0];
     int j = ws[1];
     int k = blockDim.x * blockIdx.x + threadIdx.x;
     if (k < num_vec)
     {
-        g[k] += *lambda * y[k] * (K[num_vec_aligned * j + k] - K[num_vec_aligned * i + k]);
+        g[k] += *lambda * y[k] * (K[(size_t)num_vec_aligned * j + k] - K[(size_t)num_vec_aligned * i + k]);
     }
 }
 
-__global__ void kernelUpdategCached(float * g, const float * lambda, const float * y, const float * K, const int * ws, int num_vec, int num_vec_aligned, const int * KCacheRemapIdx)
+__global__ static void kernelUpdategCached(float * g, const float * lambda, const float * y, const float * K, const int * ws, int num_vec, int num_vec_aligned, const int * KCacheRemapIdx)
 {
     int i = ws[0];
     int j = ws[1];
@@ -382,17 +518,17 @@ __global__ void kernelUpdategCached(float * g, const float * lambda, const float
     int k = blockDim.x * blockIdx.x + threadIdx.x;
     if (k < num_vec)
     {
-        g[k] += *lambda * y[k] * (K[num_vec_aligned * j_cache_row + k] - K[num_vec_aligned * i_cache_row + k]);
+        g[k] += *lambda * y[k] * (K[(size_t)num_vec_aligned * j_cache_row + k] - K[(size_t)num_vec_aligned * i_cache_row + k]);
     }
 }
 
-__global__ void kernelUpdateAlphaAndLambda(float * alpha, float * lambda, const float * y, const float * g, const float * K, float C, const int * ws, int num_vec, int num_vec_aligned)
+__global__ static void kernelUpdateAlphaAndLambda(float * alpha, float * lambda, const float * y, const float * g, const float * K, float C, const int * ws, int num_vec, int num_vec_aligned)
 {
     int i = ws[0];
     int j = ws[1];
     float l1 = y[i] > 0 ? C - alpha[i] : alpha[i];
     float l2 = y[j] > 0 ? alpha[j] : C - alpha[j];
-    float l3 = (y[i] * g[i] - y[j] * g[j]) / (K[num_vec_aligned * i + i] + K[num_vec_aligned * j + j] - 2 * K[num_vec_aligned * i + j]);
+    float l3 = (y[i] * g[i] - y[j] * g[j]) / (K[(size_t)num_vec_aligned * i + i] + K[(size_t)num_vec_aligned * j + j] - 2 * K[(size_t)num_vec_aligned * i + j]);
     float l = min(l1, min(l2, l3));
 
     *lambda = l;
@@ -400,14 +536,14 @@ __global__ void kernelUpdateAlphaAndLambda(float * alpha, float * lambda, const 
     alpha[j] -= l * y[j];
 }
 
-__global__ void kernelUpdateAlphaAndLambdaCached(float * alpha, float * lambda, const float * y, const float * g, const float * K, float C, const int * ws, int num_vec_aligned, const float * KDiag, const int * KCacheRemapIdx)
+__global__ static void kernelUpdateAlphaAndLambdaCached(float * alpha, float * lambda, const float * y, const float * g, const float * K, float C, const int * ws, int num_vec_aligned, const float * KDiag, const int * KCacheRemapIdx)
 {
     int i = ws[0];
     int j = ws[1];
     int cache_row = KCacheRemapIdx[i];
     float l1 = y[i] > 0 ? C - alpha[i] : alpha[i];
     float l2 = y[j] > 0 ? alpha[j] : C - alpha[j];
-    float l3 = (y[i] * g[i] - y[j] * g[j]) / (KDiag[i] + KDiag[j] - 2 * K[num_vec_aligned * cache_row + j]);
+    float l3 = (y[i] * g[i] - y[j] * g[j]) / (KDiag[i] + KDiag[j] - 2 * K[(size_t)num_vec_aligned * cache_row + j]);
     float l = min(l1, min(l2, l3));
 
     *lambda = l;
@@ -415,17 +551,9 @@ __global__ void kernelUpdateAlphaAndLambdaCached(float * alpha, float * lambda, 
     alpha[j] -= l * y[j];
 }
 
-__device__ int d_cacheUpdateCnt;
-//contains changes to KCacheRemapIdx buffer, which should be written after kernelCheckCache ends
-//each change to buffer is contained in int2 variable (x,y) such that
-//KCacheRemapIdx[x] = y
-//pair at index [2] is for KCacheRowPriority
-__device__ int2 d_KCacheChanges[3];
 
-__device__ int d_cacheRow;
-
-template <bool gBar = false>
-__global__ void kernelCheckCacheFinalize(int * KCacheRemapIdx, int * KCacheRowPriority, int ws_idx = 0)
+template <bool gBar>
+__global__ static void kernelCheckCacheFinalize(int * KCacheRemapIdx, int * KCacheRowPriority, int ws_idx = 0)
 {
     if (gBar && d_alphaStatusChange[ws_idx] == 0)
         return;
@@ -448,7 +576,7 @@ __global__ void kernelCheckCacheFinalize(int * KCacheRemapIdx, int * KCacheRowPr
     }
 }
 
-__global__ void kernelCheckCachePriority(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned)
+__global__ static void kernelCheckCachePriority(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * xT, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned)
 {
     int last = d_cacheRow;
     if (last < 0)
@@ -474,13 +602,13 @@ __global__ void kernelCheckCachePriority(const int * i_ptr, float * K, int * KCa
             float diff = sx[d] - xT[num_vec_aligned * d + j];
             sum += diff * diff;
         }
-        K[num_vec_aligned * last + j] = expf(-gamma * sum);
+        K[(size_t)num_vec_aligned * last + j] = expf(-gamma * sum);
         j += gridDim.x * blockDim.x;
     }
 }
 
-template <bool gBar = false>
-__global__ void kernelCheckCachePriorityV2(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * x, const float * x2, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int ws_idx = 0)
+template <bool gBar>
+__global__ static void kernelCheckCachePriorityV2(const int * i_ptr, float * K, const float * x, const float * x2, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int ws_idx = 0)
 {
     if (gBar && d_alphaStatusChange[ws_idx] == 0)
         return;
@@ -504,26 +632,58 @@ __global__ void kernelCheckCachePriorityV2(const int * i_ptr, float * K, int * K
                 sum += x[dim_aligned * i + d] * x[dim_aligned * j + d];
             }
         }
-        shsum[threadIdx.y][threadIdx.x] = sum;
+        shsum[threadIdx.x][threadIdx.y] = sum;
         __syncthreads();
-        for (int s = blockDim.x / 2; s > 0; s >>= 1)
+        for (int s = blockDim.y / 2; s > 0; s >>= 1)
         {
-            if (threadIdx.x < s)
-                shsum[threadIdx.y][threadIdx.x] += shsum[threadIdx.y][threadIdx.x + s];
+            if (threadIdx.y < s)
+                shsum[threadIdx.y][threadIdx.x] += shsum[threadIdx.y + s][threadIdx.x];
             __syncthreads();
         }
         if (threadIdx.y == 0 && jout < num_vec)
         {
-            sum = x2[i] + x2[jout] - 2 * shsum[threadIdx.x][0];
-            K[num_vec_aligned * last + jout] = expf(-gamma * sum);
+            sum = x2[i] + x2[jout] - 2 * shsum[0][threadIdx.x];
+            K[(size_t)num_vec_aligned * last + jout] = expf(-gamma * sum);
         }
-        __syncthreads;
+        __syncthreads();
         block += gridDim.x * blockDim.x;
     }
 }
 
-template <bool gBar = false>
-__global__ void kernelMakeDenseVec(const int * i_ptr, const int * KCacheRemapIdx, csr_gpu x, float * vec, int ws_idx = 0)
+template<bool useSM>
+__global__ static void kernelCheckCachePriorityV3(const int * i_ptr, float * K, const float * x, const float * xT, const float * x2, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned)
+{
+    int last = d_cacheRow;
+    if (last < 0)
+        return;
+    int i = *i_ptr;
+
+    extern __shared__ float shXi[];
+    if (useSM)
+    {
+        for (int d = threadIdx.x; d < dim; d += blockDim.x)
+            shXi[d] = x[dim_aligned * i + d];
+        __syncthreads();
+    }
+
+    //calculate cache matrix row [last], original index is [i]
+    for (int j = blockDim.x * blockIdx.x + threadIdx.x; j < num_vec; j += gridDim.x * blockDim.x)
+    {
+        float sum = 0;
+        for (int d = 0; d < dim; d++)
+        {
+            if (useSM)
+                sum += shXi[d] * xT[num_vec_aligned * d + j];
+            else
+                sum += xT[num_vec_aligned * d + i] * xT[num_vec_aligned * d + j];
+        }
+        sum = x2[i] + x2[j] - 2 * sum;
+        K[(size_t)num_vec_aligned * last + j] = __expf(-gamma * sum);
+    }
+}
+
+template <bool gBar>
+__global__ static void kernelMakeDenseVec(const int * i_ptr, const int * KCacheRemapIdx, csr_gpu x, float * vec, int ws_idx = 0)
 {
     if (gBar && d_alphaStatusChange[ws_idx] == 0)
         return;
@@ -538,8 +698,8 @@ __global__ void kernelMakeDenseVec(const int * i_ptr, const int * KCacheRemapIdx
     }
 }
 
-template <bool gBar = false>
-__global__ void kernelFindCacheRow(const int * i_ptr, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, int ws_idx = 0)
+template <bool gBar>
+__global__ static void kernelFindCacheRow(const int * i_ptr, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, int ws_idx = 0)
 {
     if (gBar && d_alphaStatusChange[ws_idx] == 0)
         return;
@@ -606,7 +766,7 @@ __global__ void kernelFindCacheRow(const int * i_ptr, int * KCacheRemapIdx, int 
     }
 }
 
-__global__ void kernelCheckCacheSparsePriority(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * vec, const float * x2, csr_gpu x, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned)
+__global__ static void kernelCheckCacheSparsePriority(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * vec, const float * x2, csr_gpu x, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned)
 {
     int last = d_cacheRow;
     if (last < 0)
@@ -626,15 +786,15 @@ __global__ void kernelCheckCacheSparsePriority(const int * i_ptr, float * K, int
         }
         sum = x2[i] + x2[j] - 2 * sum;
 
-        K[num_vec_aligned * last + j] = expf(-gamma * sum);
+        K[(size_t)num_vec_aligned * last + j] = expf(-gamma * sum);
         j += gridDim.x * blockDim.x;
     }
 }
 
 #define SPARSE_TILE_SIZE 16
 
-template <bool gBar = false>
-__global__ void kernelCheckCacheSparsePriorityV2(const int * i_ptr, float * K, int * KCacheRemapIdx, int * KCacheRowIdx, int * KCacheRowPriority, int cache_rows, const float * vec, const float * x2, csr_gpu x, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int ws_idx = 0)
+template <bool gBar>
+__global__ static void kernelCheckCacheSparsePriorityV2(const int * i_ptr, float * K, const float * vec, const float * x2, csr_gpu x, float gamma, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int ws_idx = 0)
 {
     if (gBar && d_alphaStatusChange[ws_idx] == 0)
         return;
@@ -671,20 +831,19 @@ __global__ void kernelCheckCacheSparsePriorityV2(const int * i_ptr, float * K, i
         if (threadIdx.y == 0 && jout < num_vec)
         {
             sum = x2[i] + x2[jout] - 2 * shsum[threadIdx.x][0];
-            K[num_vec_aligned * last + jout] = expf(-gamma * sum);
+            K[(size_t)num_vec_aligned * last + jout] = expf(-gamma * sum);
         }
-        __syncthreads;
+        __syncthreads();
         block += gridDim.x * blockDim.x;
     }
 }
 
 //make a GPU deep copy of a CPU csr matrix
-cudaError_t make_gpu_csr(csr_gpu &x_gpu, const csr &x_cpu) {
+static cudaError_t make_gpu_csr(csr_gpu &x_gpu, const csr &x_cpu) {
 	x_gpu.nnz = x_cpu.nnz;
 	x_gpu.numCols = x_cpu.numCols;
 	x_gpu.numRows = x_cpu.numRows;
 
-	cudaError_t error;
 	assert_cuda(cudaMalloc((void **)&(x_gpu.values), x_gpu.nnz * sizeof(float)));
 	assert_cuda(cudaMalloc((void **)&(x_gpu.colInd), x_gpu.nnz * sizeof(int)));
 	assert_cuda(cudaMalloc((void **)&(x_gpu.rowOffsets), (x_gpu.numRows+1) * sizeof(int)));
@@ -701,8 +860,7 @@ cudaError_t make_gpu_csr(csr_gpu &x_gpu, const csr &x_cpu) {
 	return cudaSuccess;
 } //make_gpu_csr
 
-cudaError_t cudaCsrFree(csr_gpu &x_gpu) {
-	cudaError_t error;
+static cudaError_t cudaCsrFree(csr_gpu &x_gpu) {
 	assert_cuda(cudaFree(x_gpu.values));
 	assert_cuda(cudaFree(x_gpu.colInd));
 	assert_cuda(cudaFree(x_gpu.rowOffsets));
@@ -717,7 +875,58 @@ cudaError_t cudaCsrFree(csr_gpu &x_gpu) {
 	return cudaSuccess;
 } //cudaCsrFree
 
-static void checkCache(bool sparse, int * d_i, float * d_x, const float * d_x2, const csr_gpu & sparse_data_gpu, float * d_K, int * d_KCacheRemapIdx, int * d_KCacheRowIdx, int * d_KCacheRowPriority, float * d_denseVec, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int cache_rows, float gamma)
+void calcKernelRow(const float * d_x, const float * d_xT, const int * d_i, int dim, int dim_aligned, int num_vec, int num_vec_aligned, float * d_K, float gamma, const float * d_x2, const cudaDeviceProp * devProp)
+{
+#ifdef USE_TRANSPOSED_X
+    {
+        dim3 dimBlock(256);
+        dim3 dimGrid(getgriddim<int>(num_vec, dimBlock.x));
+        size_t smSize = dim * sizeof(float);
+        if (smSize <= devProp->sharedMemPerBlock)
+            kernelCheckCachePriorityV3<true><<<dimGrid, dimBlock, smSize>>>(d_i, d_K, d_x, d_xT, d_x2, gamma, num_vec, num_vec_aligned, dim, dim_aligned);
+        else
+            kernelCheckCachePriorityV3<false><<<dimGrid, dimBlock>>>(d_i, d_K, d_x, d_xT, d_x2, gamma, num_vec, num_vec_aligned, dim, dim_aligned);
+        return;
+    }
+#endif
+    const int NUM_THREADS = 32;
+    const int NUM_THREADS_Y = 8;
+    const int ROWS_AT_ONCE = 4;
+	int unroll = DIV_ALIGNED(dim_aligned, NUM_THREADS);
+
+    switch (unroll) {
+    case 1:
+        kernelCalcKernelRow<1, NUM_THREADS_Y, ROWS_AT_ONCE> << < DIV_ALIGNED(num_vec, ROWS_AT_ONCE * NUM_THREADS_Y), dim3(NUM_THREADS, NUM_THREADS_Y) >> > (d_x, d_i, dim_aligned, num_vec, num_vec_aligned, d_K, gamma, d_x2);
+        break;
+    case 2:
+        kernelCalcKernelRow<2, NUM_THREADS_Y, ROWS_AT_ONCE> << < DIV_ALIGNED(num_vec, ROWS_AT_ONCE * NUM_THREADS_Y), dim3(NUM_THREADS, NUM_THREADS_Y) >> > (d_x, d_i, dim_aligned, num_vec, num_vec_aligned, d_K, gamma, d_x2);
+        break;
+    case 3:
+        kernelCalcKernelRow<3, NUM_THREADS_Y, ROWS_AT_ONCE> << < DIV_ALIGNED(num_vec, ROWS_AT_ONCE * NUM_THREADS_Y), dim3(NUM_THREADS, NUM_THREADS_Y) >> > (d_x, d_i, dim_aligned, num_vec, num_vec_aligned, d_K, gamma, d_x2);
+        break;
+    case 4:
+        kernelCalcKernelRow<4, NUM_THREADS_Y, ROWS_AT_ONCE> << < DIV_ALIGNED(num_vec, ROWS_AT_ONCE * NUM_THREADS_Y), dim3(NUM_THREADS, NUM_THREADS_Y) >> > (d_x, d_i, dim_aligned, num_vec, num_vec_aligned, d_K, gamma, d_x2);
+        break;
+    case 5:
+        kernelCalcKernelRow<5, NUM_THREADS_Y, ROWS_AT_ONCE> << < DIV_ALIGNED(num_vec, ROWS_AT_ONCE * NUM_THREADS_Y), dim3(NUM_THREADS, NUM_THREADS_Y) >> > (d_x, d_i, dim_aligned, num_vec, num_vec_aligned, d_K, gamma, d_x2);
+        break;
+    case 6:
+        kernelCalcKernelRow<6, NUM_THREADS_Y, ROWS_AT_ONCE> << < DIV_ALIGNED(num_vec, ROWS_AT_ONCE * NUM_THREADS_Y), dim3(NUM_THREADS, NUM_THREADS_Y) >> > (d_x, d_i, dim_aligned, num_vec, num_vec_aligned, d_K, gamma, d_x2);
+        break;
+    case 7:
+        kernelCalcKernelRow<7, NUM_THREADS_Y, ROWS_AT_ONCE> << < DIV_ALIGNED(num_vec, ROWS_AT_ONCE * NUM_THREADS_Y), dim3(NUM_THREADS, NUM_THREADS_Y) >> > (d_x, d_i, dim_aligned, num_vec, num_vec_aligned, d_K, gamma, d_x2);
+        break;
+    case 8:
+        kernelCalcKernelRow<8, NUM_THREADS_Y, ROWS_AT_ONCE> << < DIV_ALIGNED(num_vec, ROWS_AT_ONCE * NUM_THREADS_Y), dim3(NUM_THREADS, NUM_THREADS_Y) >> > (d_x, d_i, dim_aligned, num_vec, num_vec_aligned, d_K, gamma, d_x2);
+        break;
+    default:
+        dim3 dimBlock(DENSE_TILE_SIZE, DENSE_TILE_SIZE);
+        dim3 dimGrid(std::min(256, getgriddim<int>(num_vec, dimBlock.y)));
+        kernelCheckCachePriorityV2<false><<<dimGrid, dimBlock>>>(d_i, d_K, d_x, d_x2, gamma, num_vec, num_vec_aligned, dim, dim_aligned, 0);
+    }
+}
+
+static void checkCache(bool sparse, int * d_i, const float * d_x, const float * d_xT, const float * d_x2, const csr_gpu & sparse_data_gpu, float * d_K, int * d_KCacheRemapIdx, int * d_KCacheRowIdx, int * d_KCacheRowPriority, float * d_denseVec, int num_vec, int num_vec_aligned, int dim, int dim_aligned, int cache_rows, float gamma, const cudaDeviceProp * devProp)
 {
     dim3 dimBlockCache(256);
     dim3 dimGridCache(getgriddim<int>(num_vec, dimBlockCache.x));
@@ -727,27 +936,26 @@ static void checkCache(bool sparse, int * d_i, float * d_x, const float * d_x2, 
         assert_cuda(cudaMemset(d_denseVec, 0, dim * sizeof(float)));
         dim3 dimBlock(256);
         dim3 dimGrid(std::min(64, getgriddim<int>(dim, dimBlock.x)));
-        kernelMakeDenseVec<<<dimGrid, dimBlock>>>(d_i, d_KCacheRemapIdx, sparse_data_gpu, d_denseVec);
-        kernelFindCacheRow<<<1, 256, 256 * sizeof(int2)>>>(d_i, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows);
+        kernelMakeDenseVec<false><<<dimGrid, dimBlock>>>(d_i, d_KCacheRemapIdx, sparse_data_gpu, d_denseVec);
+        kernelFindCacheRow<false><<<1, 256, 256 * sizeof(int2)>>>(d_i, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows);
         dimBlock = dim3(SPARSE_TILE_SIZE, SPARSE_TILE_SIZE);
         dimGrid = dim3(std::min(256, getgriddim<int>(num_vec, dimBlock.y)));
-        kernelCheckCacheSparsePriorityV2<<<dimGrid, dimBlock>>>(d_i, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows, d_denseVec, d_x2, sparse_data_gpu, gamma, num_vec, num_vec_aligned, dim, dim_aligned);
+        kernelCheckCacheSparsePriorityV2<false><<<dimGrid, dimBlock>>>(d_i, d_K, d_denseVec, d_x2, sparse_data_gpu, gamma, num_vec, num_vec_aligned, dim, dim_aligned);
     }
     else
     {
         kernelCheckCacheSMSize = std::max(kernelCheckCacheSMSize, dim * sizeof(float));
-        kernelFindCacheRow<<<1, 256, 256 * sizeof(int2)>>>(d_i, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows);
-        dim3 dimBlock(DENSE_TILE_SIZE, DENSE_TILE_SIZE);
-        dim3 dimGrid(std::min(256, getgriddim<int>(num_vec, dimBlock.y)));
-        kernelCheckCachePriorityV2 << <dimGrid, dimBlock >> >(d_i, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows, d_x, d_x2, gamma, num_vec, num_vec_aligned, dim, dim_aligned, 0);
+        kernelFindCacheRow<false><<<1, 256, 256 * sizeof(int2)>>>(d_i, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, cache_rows);
+        calcKernelRow(d_x, d_xT, d_i, dim, dim_aligned, num_vec, num_vec_aligned, d_K, gamma, d_x2, devProp);
     }
-    kernelCheckCacheFinalize<<<1, 1>>>(d_KCacheRemapIdx, d_KCacheRowPriority);
+    kernelCheckCacheFinalize<false><<<1, 1>>>(d_KCacheRemapIdx, d_KCacheRowPriority);
 }
 
 void OrcusSvmTrain(float * alpha, float * rho, bool sparse, const float * x, const float * y, size_t num_vec, size_t num_vec_aligned, size_t dim, size_t dim_aligned, float C, float gamma, float eps)
 {
     float *d_alpha = nullptr,
         *d_x = nullptr,
+        *d_xT = nullptr,
         *d_y = nullptr,
         *d_g = nullptr,
         *d_gBar = nullptr,
@@ -764,30 +972,22 @@ void OrcusSvmTrain(float * alpha, float * rho, bool sparse, const float * x, con
     float *d_denseVec = nullptr;  //dense vector used to calculate K cache row for sparse data
     float *d_x2 = nullptr;
 
+    int dev;
+    cudaDeviceProp devProp;
+    assert_cuda(cudaGetDevice(&dev));
+    assert_cuda(cudaGetDeviceProperties(&devProp, dev));
     bool useShrinking = true;
     size_t reduce_block_size = 256;
     size_t reduce_buff_size = rounduptomult(num_vec, reduce_block_size);
     size_t ones_size = std::max(num_vec_aligned, dim_aligned);
-    size_t cache_size_mb = g_cache_size;
-    if (cache_size_mb == 0)
-    {
-        size_t free_mem, total_mem;
-        assert_cuda(cudaFree(nullptr));  //force CUDA init
-        assert_cuda(cuMemGetInfo(&free_mem, &total_mem));
-        cache_size_mb = (free_mem * 0.7) / (1024 * 1024);
-    }
-    size_t cache_rows = cache_size_mb * 1024 * 1024 / (num_vec_aligned * sizeof(float));
-    cache_rows = std::min(cache_rows, num_vec);
 
     std::cout << "Training data: " << (sparse ? "sparse" : "dense") << std::endl;
     std::cout << "Data size: " << num_vec << "\nDimension: " << dim << std::endl;
-    std::cout << "Cache size: " << cache_rows << " rows (" << (100.f * cache_rows / (float)num_vec) << " % of data set)" << std::endl;
 
     cublasHandle_t cublas;
     assert_cublas(cublasCreate(&cublas));
 
     const csr * sparse_data = (const csr *)x;
-    g_csr = sparse_data;
     csr_gpu sparse_data_gpu;
     assert_cuda(cudaMalloc(&d_x2, num_vec * sizeof(float)));
     if (sparse)
@@ -800,6 +1000,9 @@ void OrcusSvmTrain(float * alpha, float * rho, bool sparse, const float * x, con
     else
     {
         assert_cuda(cudaMalloc(&d_x, num_vec_aligned * dim_aligned * sizeof(float)));
+#ifdef USE_TRANSPOSED_X
+        assert_cuda(cudaMalloc(&d_xT, num_vec_aligned * dim_aligned * sizeof(float)));
+#endif
     }
     assert_cuda(cudaMalloc(&d_alpha, num_vec_aligned * sizeof(float)));
     assert_cuda(cudaMalloc(&d_y, num_vec_aligned * sizeof(float)));
@@ -810,15 +1013,32 @@ void OrcusSvmTrain(float * alpha, float * rho, bool sparse, const float * x, con
     assert_cuda(cudaMalloc(&d_lambda, sizeof(float)));
     assert_cuda(cudaMalloc(&d_workingset, 2 * sizeof(int)));
     assert_cuda(cudaMalloc(&d_KCacheRemapIdx, num_vec * sizeof(int)));
+    size_t cache_size_mb = g_cache_size;
+    if (cache_size_mb == 0)
+    {
+        size_t free_mem, total_mem;
+        assert_cuda(cudaFree(nullptr));  //force CUDA init
+        assert_cuda(cuMemGetInfo(&free_mem, &total_mem));
+        cache_size_mb = free_mem / (1024 * 1024) - 500;  //leave 500 MB free
+    }
+    size_t cache_rows = cache_size_mb * 1024 * 1024 / (num_vec_aligned * sizeof(float));
+    cache_rows = std::min(cache_rows, num_vec);
+    std::cout << "Cache size: " << cache_rows << " rows (" << (100.f * cache_rows / (float)num_vec) << " % of data set)" << std::endl;
     assert_cuda(cudaMalloc(&d_KCacheRowIdx, (cache_rows + 2) * sizeof(int)));  //last 2 items are indices of last cache row
     assert_cuda(cudaMalloc(&d_KCacheRowPriority, cache_rows * sizeof(int)));
     assert_cuda(cudaMalloc(&d_KDiag, num_vec * sizeof(float)));
     assert_cuda(cudaMalloc(&d_K, cache_rows * num_vec_aligned * sizeof(float)));
+    std::cout << "Cache size: " << (cache_rows * num_vec_aligned) << " floats\n";
 
     assert_cuda(cudaMemset(d_alpha, 0, num_vec_aligned * sizeof(float)));
     if (!sparse)
     {
         assert_cuda(cudaMemcpy(d_x, x, num_vec_aligned * dim_aligned * sizeof(float), cudaMemcpyHostToDevice));
+#ifdef USE_TRANSPOSED_X
+        float a = 1,
+            b = 0;
+        assert_cublas(cublasSgeam(cublas, CUBLAS_OP_T, CUBLAS_OP_T, num_vec_aligned, dim_aligned, &a, d_x, dim_aligned, &b, d_x, dim_aligned, d_xT, num_vec_aligned));
+#endif
         std::cout << "Precalculating X2" << std::endl;
         computeX2Dense(d_x, d_x2, num_vec, num_vec_aligned, dim, dim_aligned, cublas);
     }
@@ -848,17 +1068,32 @@ void OrcusSvmTrain(float * alpha, float * rho, bool sparse, const float * x, con
     std::cout << "Starting iterations" << std::endl;
     for (int iter = 0;; iter++)
     {
-        kernelSelectI<<<dimGrid, dimBlock, sharedSizeSelect>>>(d_reduceval, d_reduceidx, d_y, d_g, d_alpha, C, num_vec_shrunk);
+        //__global__ static void kernelSelectIUpdateG(float * valbuf, int * idxbuf, const float * y, const float * g, const float * alpha, const float * lambda, const int * ws, float C, int num_vec, int num_vec_aligned, const int * i_ptr, const float * K, const float * KDiag, const int * KCacheRemapIdx)
+#ifdef USE_COMBINED_UPDATEG
+        if (iter > 0)
+            kernelSelectIUpdateG<<<dimGrid, dimBlock, sharedSizeSelect>>>(d_reduceval, d_reduceidx, d_y, d_g, d_alpha, d_lambda, d_workingset, C, num_vec_shrunk, num_vec_aligned, d_K, d_KCacheRemapIdx);
+        else
+#endif
+            kernelSelectI<<<dimGrid, dimBlock, sharedSizeSelect>>>(d_reduceval, d_reduceidx, d_y, d_g, d_alpha, C, num_vec_shrunk);
         reduceMaxIdx(d_reduceval, d_reduceidx, d_workingset, num_vec_shrunk, reduce_block_size);
 
         //check if I is cached
-        checkCache(sparse, d_workingset, d_x, d_x2, sparse_data_gpu, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, d_denseVec, num_vec_shrunk, num_vec_aligned, dim, dim_aligned, cache_rows, gamma);
+        checkCache(sparse, d_workingset, d_x, d_xT, d_x2, sparse_data_gpu, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, d_denseVec, num_vec_shrunk, num_vec_aligned, dim, dim_aligned, cache_rows, gamma, &devProp);
+
+        /*float a[10];
+        int cacheRow;
+        cudaMemcpyFromSymbol(&cacheRow, d_cacheRow, sizeof(int), 0);
+        std::cout << "cacheRow: " << cacheRow << std::endl;
+        cudaMemcpy(a, d_K + cacheRow * num_vec_aligned, sizeof(float) * 10, cudaMemcpyDeviceToHost);
+        for (int i = 0; i < 10; i++)
+            std::cout << i << ": " << a[i] << std::endl;
+        break;*/
 
         kernelSelectJCached<<<dimGrid, dimBlock, sharedSizeSelect>>>(d_reduceval, d_reduceidx, d_y, d_g, d_alpha, C, num_vec_shrunk, num_vec_aligned, d_workingset, d_K, d_KDiag, d_KCacheRemapIdx);
         reduceMaxIdx(d_reduceval, d_reduceidx, d_workingset + 1, num_vec_shrunk, reduce_block_size);
 
         //check if J is cached
-        checkCache(sparse, d_workingset + 1, d_x, d_x2, sparse_data_gpu, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, d_denseVec, num_vec_shrunk, num_vec_aligned, dim, dim_aligned, cache_rows, gamma);
+        checkCache(sparse, d_workingset + 1, d_x, d_xT, d_x2, sparse_data_gpu, d_K, d_KCacheRemapIdx, d_KCacheRowIdx, d_KCacheRowPriority, d_denseVec, num_vec_shrunk, num_vec_aligned, dim, dim_aligned, cache_rows, gamma, &devProp);
 
         if (iter > 0 && iter % 1000 == 0)
         {
@@ -880,7 +1115,9 @@ void OrcusSvmTrain(float * alpha, float * rho, bool sparse, const float * x, con
         }
 
         kernelUpdateAlphaAndLambdaCached<<<1, 1>>>(d_alpha, d_lambda, d_y, d_g, d_K, C, d_workingset, num_vec_aligned, d_KDiag, d_KCacheRemapIdx);
+#ifndef USE_COMBINED_UPDATEG
         kernelUpdategCached<<<dimGrid, dimBlock>>>(d_g, d_lambda, d_y, d_K, d_workingset, num_vec_shrunk, num_vec_aligned, d_KCacheRemapIdx);
+#endif
     }
 
     assert_cuda(cudaMemcpyFromSymbol(&cacheUpdateCnt, d_cacheUpdateCnt, sizeof(int), 0));

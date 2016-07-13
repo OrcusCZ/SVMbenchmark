@@ -3,10 +3,31 @@
 #ifndef __NO_CUDA
 #include "cuda_runtime_api.h"
 #endif
+#include <vector>
+#include <string>
+#include <sstream>
+#include <fstream>
+#include <algorithm>
 
+using namespace libsvm;
 
 ///////////////////////////////////////////////////////////////
 // Utils
+
+static std::vector<std::string> & split(const std::string & s, char delim, std::vector<std::string> & tokens) {
+    std::istringstream ss(s);
+    std::string token;
+    while (std::getline(ss, token, delim)) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+static std::vector<std::string> split(const std::string & s, char delim) {
+    std::vector<std::string> tokens;
+    split(s, delim, tokens);
+    return tokens;
+}
 
 int Utils::StoreResults(char *filename, int *results, unsigned int numResults) {
 	unsigned int i;
@@ -106,7 +127,7 @@ int SvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_ty
 		/* Read data from file. */
 		switch(file_type) {
 		case LIBSVM_TXT:
-			if((req_data_format->supported_types & SPARSE) && (data_type == UNKNOWN || data_type == SPARSE)) {
+			if((req_data_format->supported_types & SUPPORTED_FORMAT_CSR) && (data_type == UNKNOWN || data_type == SPARSE)) {
 				load_libsvm_data_sparse(fid, data_type, req_data_format);
 			} else {
 				load_libsvm_data_dense(fid, data_type, req_data_format);
@@ -126,6 +147,12 @@ int SvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_ty
 	//if(data_type == SPARSE && (req_data_format->supported_types & SPARSE) == 0) ConvertDataToDense(req_data_format);
 	//if(data_type == DENSE && (req_data_format->supported_types & DENSE) == 0) ConvertDataToCSR(req_data_format);
 
+    if ((type == SPARSE && !(req_data_format->supported_types & SUPPORTED_FORMAT_CSR)) || (type == DENSE && !(req_data_format->supported_types & SUPPORTED_FORMAT_DENSE)))
+    {
+        printf("Unsupported data type\n");
+        return FAILURE;
+    }
+
 	return SUCCESS;
 } //SvmData::Load()
 
@@ -139,7 +166,6 @@ int SvmData::ConvertDataToCSR() {
 	return 0;
 } //SvmData::ConvertDataToCSR
 
-
 int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_memory_dataformat *req_data_format) {
 
 	Delete();
@@ -150,7 +176,7 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 		*sbuf_tmp,
 		*line = NULL,
 		*line_end;
-	unsigned int i,
+	size_t i,
 		it = 0,
 		j,
 		start_pos,
@@ -158,8 +184,8 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 		read_chars,
 		new_len,
 		line_len;
-	int line_size,
-		ret;
+	long long line_size;
+	int ret;
 
 	if ((start_pos = ftell(fid)) == EOF) {
 		printf("File is not openned!\n");
@@ -199,7 +225,7 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 				sbuf[read_chars++] = 0;
 				sbuf_size = read_chars;
 				sbuf = (char *) realloc(sbuf, sbuf_size * sizeof(float));
-				printf("Buffering input text file (%d B).\n", sbuf_size);
+				printf("Buffering input text file (%ld B).\n", sbuf_size);
 				break;
 			}
 		}
@@ -224,9 +250,11 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 			ret |= *buf ^ ' ';
 			buf++;
 
-
 			while (!ret && (buf < line_end) && (*buf != 0)) {
-				buf = next_string_spec_colon(buf);
+				buf = std::min(next_string_spec_colon(buf), next_eol(buf));
+				if ((*buf == '\n') || (*buf == 0)) {
+					break;
+				}
 				ret |= *(buf++) ^ ':';
 				buf = next_string_spec_space(buf);
 				if (*buf == '\n' || *buf == 0) {
@@ -255,16 +283,8 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 
 		numVects_aligned = ALIGN_UP(numVects, req_data_format->vectAlignment);
 		dimVects_aligned = ALIGN_UP(dimVects, req_data_format->dimAlignment);
-		if (req_data_format->allocate_write_combined) malloc_host_WC((void **) & vector_labels, sizeof(int) * numVects_aligned);
-		else {
-			if (req_data_format->allocate_pinned) malloc_host_PINNED((void **) & vector_labels, sizeof(int) * numVects_aligned);
-			else vector_labels = (int *) malloc(sizeof(float) * numVects_aligned);
-		}
-		if (req_data_format->allocate_write_combined) malloc_host_WC((void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
-		else {
-			if (req_data_format->allocate_pinned) malloc_host_PINNED((void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
-			else data_dense = (float *) malloc(sizeof(float) * dimVects_aligned * numVects_aligned);
-		}
+		malloc_general(req_data_format, (void **) & vector_labels, sizeof(float) * numVects_aligned);
+		malloc_general(req_data_format, (void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
 		memset(data_dense, 0, sizeof(float) * dimVects_aligned * numVects_aligned);
 
 		i = 0;
@@ -278,7 +298,10 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 
 			while (buf < line_end) {
 				/* Read index. */
-				buf = next_string_spec_colon(buf);
+				buf = std::min(next_string_spec_colon(buf), next_eol(buf));
+				if ((*buf == '\n') || (*buf == 0)) {
+					break;
+				}
 				j = strtoi_reverse(buf - 1) - 1;
 				buf++;
 
@@ -306,7 +329,10 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 			buf++;
 
 			while (!ret && (*buf != '\n') && (*buf != 0)) {
-				buf = next_string_spec_colon(buf);
+				buf = std::min(next_string_spec_colon(buf), next_eol(buf));
+				if (*buf == '\n' || *buf == 0) {
+					break;
+				}
 				ret |= *(buf++) ^ ':';
 				buf = next_string_spec_space(buf);
 				if (*buf == '\n' || *buf == 0) {
@@ -336,16 +362,8 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 
 		numVects_aligned = ALIGN_UP(numVects, req_data_format->vectAlignment);
 		dimVects_aligned = ALIGN_UP(dimVects, req_data_format->dimAlignment);
-		if (req_data_format->allocate_write_combined) malloc_host_WC((void **) & vector_labels, sizeof(float) * numVects_aligned);
-		else {
-			if (req_data_format->allocate_pinned) malloc_host_PINNED((void **) & vector_labels, sizeof(float) * numVects_aligned);
-			else vector_labels = (int *) malloc(sizeof(float) * numVects_aligned);
-		}
-		if (req_data_format->allocate_write_combined) malloc_host_WC((void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
-		else {
-			if (req_data_format->allocate_pinned) malloc_host_PINNED((void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
-			else data_dense = (float *) malloc(sizeof(float) * dimVects_aligned * numVects_aligned);
-		}
+		malloc_general(req_data_format, (void **) & vector_labels, sizeof(float) * numVects_aligned);
+		malloc_general(req_data_format, (void **) & data_dense, sizeof(float) * dimVects_aligned * numVects_aligned);
 		memset(data_dense, 0, sizeof(float) * dimVects_aligned * numVects_aligned);
 
 		i = 0;
@@ -357,7 +375,10 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 
 			while ((*buf != '\n') && (*buf != 0)) {
 				/* Read index. */
-				buf = next_string_spec_colon(buf);
+				buf = std::min(next_string_spec_colon(buf), next_eol(buf));
+				if ((*buf == '\n') || (*buf == 0)) {
+					break;
+				}
 				j = strtoi_reverse(buf - 1) - 1;
 				buf++;
 
@@ -407,7 +428,6 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 	//store if the first label is negative: to LibSVM compatibility of stored model:
 	invertLabels = !(vector_labels[0] == 1);
 
-
 	//if float labels required:
 	if(req_data_format->labelsInFloat) {
 		labelsInFloat = true;
@@ -417,7 +437,6 @@ int SvmData::load_libsvm_data_dense(FILE * &fid, SVM_DATA_TYPE data_type, svm_me
 
 	return 0;
 } //SvmData::load_libsvm_data_dense
-
 
 int SvmData::load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_memory_dataformat *req_data_format) {
 
@@ -429,7 +448,7 @@ int SvmData::load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_m
 		*sbuf_tmp,
 		*line = NULL,
 		*line_end;
-	unsigned int i,
+	size_t i,
 		it = 0,
 		j,
 		start_pos,
@@ -437,8 +456,8 @@ int SvmData::load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_m
 		read_chars,
 		new_len,
 		line_len;
-	int line_size,
-		ret;
+	long long line_size;
+	int ret;
 
 	if ((start_pos = ftell(fid)) == EOF) {
 		printf("File is not openned!\n");
@@ -555,7 +574,10 @@ int SvmData::load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_m
 
 			while (buf < line_end) {
 				/* Read index. */
-				buf = next_string_spec_colon(buf);
+				buf = std::min(next_string_spec_colon(buf), next_eol(buf));
+				if ((*buf == '\n') || (*buf == 0)) {
+					break;
+				}
 				j = strtoi_reverse(buf - 1) - 1;
 				buf++;
 
@@ -627,7 +649,10 @@ int SvmData::load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_m
 
 			while ((*buf != '\n') && (*buf != 0)) {
 				/* Read index. */
-				buf = next_string_spec_colon(buf);
+				buf = std::min(next_string_spec_colon(buf), next_eol(buf));
+				if ((*buf == '\n') || (*buf == 0)) {
+					break;
+				}
 				j = strtoi_reverse(buf - 1) - 1;
 				buf++;
 
@@ -635,7 +660,7 @@ int SvmData::load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_m
 				data_csr->values[offset] = strtof_fast(buf, &buf);
 				data_csr->colInd[offset] = j;
 				offset++;
-				
+
 				if ((*buf == '\n') || (*buf == 0)) {
 					break;
 				}
@@ -694,7 +719,6 @@ int SvmData::load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_m
 
 	return 0;
 } //load_libsvm_data_sparse
-
 
 int SvmData::load_lasvm_binary_data(FILE * &fid, svm_memory_dataformat *req_data_format) {
 	Delete();
@@ -813,7 +837,6 @@ SvmModel::SvmModel() {
 	params = NULL;
 	allocatedByCudaHost = false;
 }
-
 
 SvmModel::~SvmModel() {
 	Delete();
@@ -961,10 +984,140 @@ int SvmModel::StoreModel_LIBSVM_TXT(char *model_file_name) {
 		}
 	}
 
-
 	fclose(fid);
 	return SUCCESS;
 } //StoreModel
+
+int SvmModel::LoadModelGeneric(char *model_file_name, SVM_MODEL_FILE_TYPE type, struct svm_memory_dataformat *req_data_format) {
+
+    switch(type) {
+        case M_LIBSVM_TXT:
+            SAFE_CALL(LoadModel_LIBSVM_TXT(model_file_name, req_data_format));
+            break;
+        default:
+            REPORT_ERROR("Unsupported model storage format");
+    }
+
+    return SUCCESS;
+}
+
+int SvmModel::LoadModel_LIBSVM_TXT(char *model_file_name, struct svm_memory_dataformat *req_data_format) {
+
+	//if (alphas == NULL || data == NULL || params == NULL) {
+		//return FAILURE;
+	//}
+	//if(data->data_dense == NULL && data->data_csr == NULL) {
+		//return FAILURE;
+	//}
+	if (data == NULL || params == NULL) {
+		return FAILURE;
+	}
+
+    std::ifstream fin(model_file_name, std::ios::in | std::ios::binary);
+    if (!fin)
+    {
+        std::cerr << "Failed to open model file '" << model_file_name << "' for reading\n";
+        return FAILURE;
+    }
+    std::string line;
+    //read header
+    while (std::getline(fin, line))
+    {
+        if (line.compare("SV") == 0)  //header end
+            break;
+        std::vector<std::string> tokens;
+        split(line, ' ', tokens);
+        if (tokens[0].compare("svm_type") == 0) {
+            if (tokens[1].compare("c_svc") != 0)
+                throw std::runtime_error("Unsupported SVM type");
+        }
+        else if (tokens[0].compare("kernel_type") == 0) {
+            int kernel_type = 0;
+            while (kernel_type_table[kernel_type]) {
+                if (tokens[1].compare(kernel_type_table[kernel_type]) == 0) {
+                    params->kernel_type = kernel_type;
+                    break;
+                }
+                kernel_type++;
+            }
+            if (!kernel_type_table[kernel_type])
+                throw std::runtime_error("Unsupported/wrong kernel type");
+        }
+        else if (tokens[0].compare("degree") == 0) {
+            if (params->kernel_type != POLY)
+                throw std::runtime_error("Parameter 'degree' can be set only for polynomial kernels");
+            params->degree = std::stoi(tokens[1]);
+        }
+        else if (tokens[0].compare("coef0") == 0) {
+            if (params->kernel_type != SIGMOID)
+                throw std::runtime_error("Parameter 'coef0' can be set only for sigmoid kernels");
+            params->coef0 = std::stod(tokens[1]);
+        }
+        else if (tokens[0].compare("gamma") == 0) {
+            if (params->kernel_type != RBF)
+                throw std::runtime_error("Parameter 'gamma' can be set only for RBF kernels");
+            params->gamma = std::stod(tokens[1]);
+        }
+        else if (tokens[0].compare("nr_class") == 0) {
+            data->numClasses = std::stoi(tokens[1]);
+            data->class_labels = (int *)malloc(data->numClasses * sizeof(int));
+        }
+        else if (tokens[0].compare("total_sv") == 0) {
+            //ignore
+        }
+        else if (tokens[0].compare("rho") == 0) {
+            params->rho = std::stod(tokens[1]);
+        }
+        else if (tokens[0].compare("label") == 0) {
+            data->class_labels[1] = std::stoi(tokens[1]);
+            data->class_labels[0] = std::stoi(tokens[2]);
+        }
+        else if (tokens[0].compare("nr_sv") == 0) {
+            params->nsv_class2 = std::stoi(tokens[1]);
+            params->nsv_class1 = std::stoi(tokens[2]);
+        }
+    }
+    //get data dim
+    std::streampos spos = fin.tellg();
+    while (std::getline(fin, line)) {
+        std::vector<std::string> tokens;
+        split(line, ' ', tokens);
+        for (int i = 1; i < tokens.size(); i++) {
+            int d = std::stoi(tokens[i]);
+            if (d > data->dimVects)
+                data->dimVects = d;
+        }
+
+    }
+    fin.clear();
+    fin.seekg(spos);
+    data->numVects = params->nsv_class1 + params->nsv_class2;
+    data->numVects_aligned = ALIGN_UP(data->numVects, req_data_format->vectAlignment);
+    data->dimVects_aligned = ALIGN_UP(data->dimVects, req_data_format->dimAlignment);
+
+    malloc_general(req_data_format, (void **) & data->data_dense, sizeof(float) * data->dimVects_aligned * data->numVects_aligned);
+    malloc_general(req_data_format, (void **) & alphas, sizeof(float) * data->numVects_aligned);
+    memset(data->data_dense, 0, sizeof(float) * data->dimVects_aligned * data->numVects_aligned);
+    //read SV
+    int k = 0;
+    while (std::getline(fin, line)) {
+        std::vector<std::string> tokens;
+        split(line, ' ', tokens);
+        alphas[k] = std::stof(tokens[0]);
+        for (int i = 1; i < tokens.size(); i++) {
+            size_t colon;
+            int d = std::stoi(tokens[i], &colon) - 1;
+            float v = std::strtof(tokens[i].c_str() + colon + 1, 0);
+            if (req_data_format->transposed)
+                data->data_dense[data->numVects_aligned * d + k] = v;
+            else
+                data->data_dense[data->dimVects_aligned * k + d] = v;
+        }
+        k++;
+    }
+
+    return SUCCESS;
+}
 
 int SvmModel::CalculateSupperVectorCounts() {
 	if(alphas == NULL || params == NULL || data == NULL) return FAILURE;
@@ -987,6 +1140,15 @@ int SvmModel::CalculateSupperVectorCounts() {
 	return SUCCESS;
 }
 
+int SvmModel::Predict(SvmData *testData, const char * file_out)
+{
+    return FAILURE;
+}
+
+int SvmModel::LoadModel(char *model_file_name, SVM_MODEL_FILE_TYPE type)
+{
+    return FAILURE;
+}
 
 void malloc_general(svm_memory_dataformat *req_data_format, void **x, size_t size) {
 	if (req_data_format->allocate_write_combined) {
@@ -999,3 +1161,19 @@ void malloc_general(svm_memory_dataformat *req_data_format, void **x, size_t siz
 		}
 	}
 } //malloc_general
+
+int GenericSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type) {
+
+	svm_memory_dataformat req_data_format;
+	req_data_format.allocate_pinned = false;
+	req_data_format.allocate_write_combined = false;
+	req_data_format.dimAlignment = 1;
+	req_data_format.vectAlignment = 1;
+	req_data_format.transposed = false;
+	req_data_format.labelsInFloat = false;
+	req_data_format.supported_types = SUPPORTED_FORMAT_DENSE | SUPPORTED_FORMAT_CSR;
+
+	SAFE_CALL(SvmData::Load(filename, file_type, data_type, &req_data_format));
+
+	return SUCCESS;
+}

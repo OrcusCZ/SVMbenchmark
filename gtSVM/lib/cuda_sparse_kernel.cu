@@ -33,8 +33,9 @@
 #include "gtsvm.h"
 #include "helpers.hpp"
 
-#include <boost/assert.hpp>
-#include <boost/cstdint.hpp>
+//already included in helpers.hpp
+//#include <boost/assert.hpp>
+//#include <boost/cstdint.hpp>
 
 #include <set>
 #include <stdexcept>

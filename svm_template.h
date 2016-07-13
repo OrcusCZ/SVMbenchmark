@@ -2,6 +2,15 @@
 #define _SVM_TEMPLATE
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#if defined WIN32 || defined WIN64
+    #define MALLOC_ALIGNED(pointer, ptype, memsize, memalign) pointer=(ptype*)_aligned_malloc(memsize, memalign)
+#else //LINUX
+    #define MALLOC_ALIGNED(pointer, ptype, memsize, memalign) posix_memalign((void**)&pointer, memalign, memsize)
+    #define _aligned_free free
+#endif
 
 struct svm_params {
 	/* Training algorithm parameters: */
@@ -112,6 +121,8 @@ protected:
 
 	int StoreModel_LIBSVM_TXT(char *model_file_name);
 	int StoreModelGeneric(char *model_file_name, SVM_MODEL_FILE_TYPE type);
+	int LoadModel_LIBSVM_TXT(char *model_file_name, struct svm_memory_dataformat *req_data_format);
+	int LoadModelGeneric(char *model_file_name, SVM_MODEL_FILE_TYPE type, struct svm_memory_dataformat *req_data_format);
 	int CalculateSupperVectorCounts();
 
 public:
@@ -119,12 +130,19 @@ public:
 	virtual ~SvmModel();
 	int Delete();
 	virtual int Train(SvmData *data, struct svm_params * params, struct svm_trainingInfo *trainingInfo) = 0;
+	virtual int Predict(SvmData *testData, const char * file_out);
 	virtual int StoreModel(char *model_file_name, SVM_MODEL_FILE_TYPE type) = 0;
+	virtual int LoadModel(char *model_file_name, SVM_MODEL_FILE_TYPE type);
 };
 
 class Utils {
 public:
 	static int StoreResults(char *filename, int *results, unsigned int numResults);
+};
+
+class GenericSvmData : public SvmData {
+public:
+	int Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type);
 };
 
 #endif //_SVM_TEMPLATE

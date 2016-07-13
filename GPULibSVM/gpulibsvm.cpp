@@ -12,6 +12,8 @@
 #include "gpulibsvm.h"
 //int libsvm_version = LIBSVM_VERSION;
 
+using namespace libsvm;
+
 typedef float Qfloat;
 typedef signed char schar;
 
@@ -213,7 +215,7 @@ public:
 	virtual ~GPULibSvmKernel();
 
 	static double k_function(const gpulibsvm_node *x, const gpulibsvm_node *y,
-				 const svm_parameter& param);
+		const svm_parameter& param);
 	virtual Qfloat *get_Q(int column, int len) const = 0;
 	virtual double *get_QD() const = 0;
 	virtual void swap_index(int i, int j) const	// no so const...

@@ -1,3 +1,27 @@
+/*
+MIT License
+
+Copyright (c) 2015 University of West Bohemia
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,9 +41,9 @@
 #ifdef COMPILE_WITH_MULTISVM
 #include "multiSVM_wrapper.h"
 #endif
-#ifdef COMPILE_WITH_GTSVM
-#include "gtSVM_wrapper.h"
-#endif
+//#ifdef COMPILE_WITH_GTSVM
+//#include "gtSVM_wrapper.h"
+//#endif
 #ifdef COMPILE_WITH_ORCUSSVM
 #include "orcusSVM/orcusSVM_wrapper.h"
 #endif
@@ -231,13 +255,13 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
         model = new MultiSvmModel;
         return SUCCESS;
 #endif
-#ifdef COMPILE_WITH_GTSVM
+/* #ifdef COMPILE_WITH_GTSVM
     case 6:
         printf("Using gtSVM(large clusters) (Andrew Cotter)...\n\n");
         data = new GtSvmData;
         model = new GtSvmModel(false);
         return SUCCESS;
-#endif
+#endif */
 #ifdef COMPILE_WITH_ORCUSSVM
     case 7:
         printf("Using OrcusSVM...\n\n");
@@ -286,13 +310,13 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
         model = new OrcusSvmDPModel;
         return SUCCESS;
 #endif
-#ifdef COMPILE_WITH_GTSVM
-	case 16:
-		printf("Using gtSVM(small clusters) (Andrew Cotter)...\n\n");
-		data = new GtSvmData;
-		model = new GtSvmModel(true);
-		return SUCCESS;
-#endif
+//#ifdef COMPILE_WITH_GTSVM
+//	case 16:
+//		printf("Using gtSVM(small clusters) (Andrew Cotter)...\n\n");
+//		data = new GtSvmData;
+//		model = new GtSvmModel(true);
+//		return SUCCESS;
+//#endif
 #ifdef COMPILE_WITH_WUSVM
 	case 21:
 		printf("Using WuLibSVM<double, lasp, openMP>...\n\n");
@@ -383,6 +407,7 @@ void print_help() {
 #endif
 #ifdef COMPILE_WITH_GTSVM
         "         6   GTSVM - large clusters (Andrew Cotter)\n"
+		"             Disabled due to license issues, use GPL build\n"
 #endif
 #ifdef COMPILE_WITH_ORCUSSVM
 		"         7   OrcusSVM (Michalek,Vanek)\n"

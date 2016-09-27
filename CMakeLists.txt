@@ -14,7 +14,7 @@ SET(COMPILE_WITH_MULTISVM ON CACHE BOOL "Compile with MultiSVM")
 SET(COMPILE_WITH_GTSVM ON CACHE BOOL "Compile with GTSVM")
 SET(COMPILE_WITH_ORCUSSVM OFF CACHE BOOL "Compile with OrcusSVM")
 SET(COMPILE_WITH_ORCUSSVMCPU OFF CACHE BOOL "Compile with OrcusSVM serial CPU")
-SET(COMPILE_WITH_ORCUSSVM1B ON CACHE BOOL "Compile with Chunking OrcusSVM")
+SET(COMPILE_WITH_ORCUSSVM1B OFF CACHE BOOL "Compile with Chunking OrcusSVM")
 SET(COMPILE_WITH_ORCUSSVMDP OFF CACHE BOOL "Compile with OrcusSVM with Dynamic Parallelism")
 SET(COMPILE_WITH_ACCLIBSVM OFF CACHE BOOL "Compile with AccLibSVM")
 SET(COMPILE_WITH_OPENCLSVM OFF CACHE BOOL "Compile with OpenCLSVM")
@@ -34,7 +34,7 @@ SET(USE_CUDA_DP OFF)
 IF(NO_CUDA OR NOT CUDA_FOUND)
     SET(COMPILE_WITH_GPULIBSVM OFF)
     SET(COMPILE_WITH_CUSVM OFF)
-    SET(COMPILE_WITH_GPUSVM OFF)
+    # SET(COMPILE_WITH_GPUSVM OFF)
     SET(COMPILE_WITH_MULTISVM OFF)
     SET(COMPILE_WITH_GTSVM OFF)
     SET(COMPILE_WITH_ORCUSSVM OFF)
@@ -55,11 +55,11 @@ ELSE()
     ENDIF()
 ENDIF()
 
-IF(COMPILE_WITH_OPENCL)
+IF(COMPILE_WITH_OPENCLSVM)
     FIND_PACKAGE(OpenCL)
     IF(NOT OpenCL_FOUND)
         MESSAGE(WARNING "OpenCL not found, disabling OpenCLSVM")
-        SET(COMPILE_WITH_OPENCL OFF)
+        SET(COMPILE_WITH_OPENCLSVM OFF)
     ENDIF()
 ENDIF()
 
@@ -70,14 +70,14 @@ IF(USE_SSE)
     ENDIF()
 ENDIF()
 
-IF(COMPILE_WITH_GTSVM)
-    IF(NOT NO_BOOST)
-        FIND_PACKAGE(Boost) #needed for gtSVM
-        IF(NOT Boost_FOUND)
-            MESSAGE("Boost not found, using workaround for gtSVM")
-        ENDIF()
-    ENDIF()
-ENDIF()
+# IF(COMPILE_WITH_GTSVM)
+    # IF(NOT NO_BOOST)
+        # FIND_PACKAGE(Boost) #needed for gtSVM
+        # IF(NOT Boost_FOUND)
+            # MESSAGE("Boost not found, using workaround for gtSVM")
+        # ENDIF()
+    # ENDIF()
+# ENDIF()
 IF(CMAKE_COMPILER_IS_GNUCC)
     STRING(REGEX REPLACE ".*/" "" C ${CUDA_HOST_COMPILER})
     IF(${C} STREQUAL "ccache")
@@ -86,22 +86,40 @@ IF(CMAKE_COMPILER_IS_GNUCC)
     ENDIF()
 ENDIF()
 
+IF(COMPILE_WITH_GPUSVM)
+    FIND_PATH(CUDA_COMMON_INCLUDE_DIRS
+        helper_cuda.h
+        PATHS ${CUDA_SDK_SEARCH_PATH}
+        "/usr/local/cuda-${CUDA_VERSION}/samples/common/inc"
+        "C:/ProgramData/NVIDIA Corporation/CUDA Samples/v${CUDA_VERSION}/common/inc"
+        DOC "Location of helper_cuda.h"
+        NO_DEFAULT_PATH)
+    IF(NOT CUDA_COMMON_INCLUDE_DIRS)
+        MESSAGE(WARNING "CUDA Samples common include directory not found, disabling gpuSVM. To enable, set CUDA_COMMON_INCLUDE_DIRS to point to the samples common include directory.")
+        SET(COMPILE_WITH_GPUSVM OFF)
+    ENDIF()
+ENDIF()
 
 IF(COMPILE_WITH_WUSVM)
+    IF(NOT DEFINED ENV{MKLROOT} OR NOT DEFINED ENV{IPPROOT})
+        MESSAGE(WARNING "MKL or IPP root directories not set, disabling wuSVM. Set the environmental variables MKLROOT and IPPROOT to point to the root directories of both libraries to enable wuSVM.")
+        SET(COMPILE_WITH_WUSVM OFF)
+    ELSE()
 #module add intelcdk-12
-    SET (MKL_MY_LIB_FILES
-        mkl_intel_lp64
-        mkl_core
-        mkl_sequential
-    )
-    SET (IPP_MY_LIB_FILES
-        ipps
-    )
+        SET (MKL_MY_LIB_FILES
+            mkl_intel_lp64
+            mkl_core
+            mkl_sequential
+        )
+        SET (IPP_MY_LIB_FILES
+            ipps
+        )
 
-    FIND_PACKAGE(OpenMP)
-    IF (OPENMP_FOUND)
-        SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-        SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+        FIND_PACKAGE(OpenMP)
+        IF (OPENMP_FOUND)
+            SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+            SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+        ENDIF()
     ENDIF()
 ENDIF()
 
@@ -157,33 +175,33 @@ SET(gpuSVM_src
     gpuSVM/gpuSVM_wrapper.h
 )
 
-SET(gtSVM_src
-    gtSVM/bin/auto_context.hpp
-    gtSVM/lib/cuda.hpp
-    gtSVM/lib/cuda_array.cu
-    gtSVM/lib/cuda_array.hpp
-    gtSVM/lib/cuda_exception.cpp
-    gtSVM/lib/cuda_exception.hpp
-    gtSVM/lib/cuda_find_largest.cu
-    gtSVM/lib/cuda_find_largest.hpp
-    gtSVM/lib/cuda_helpers.hpp
-    gtSVM/lib/cuda_partial_sum.cu
-    gtSVM/lib/cuda_partial_sum.hpp
-    gtSVM/lib/cuda_reduce.cu
-    gtSVM/lib/cuda_reduce.hpp
-    gtSVM/lib/cuda_sparse_kernel.cu
-    gtSVM/lib/cuda_sparse_kernel.hpp
-    gtSVM/lib/gtsvm.cpp
-    gtSVM/lib/gtsvm.h
-    gtSVM/lib/headers.hpp
-    gtSVM/lib/helpers.hpp
-    gtSVM/lib/svm_gt.cpp
-    gtSVM/lib/svm_gt.hpp
-    gtSVM/boost_helpers.h #workaround so we don't need boost
-    gtSVM/boost_headers.h #workaround so we don't need boost
-    gtSVM/gtSVM_wrapper.cpp
-    gtSVM/gtSVM_wrapper.h
-)
+# SET(gtSVM_src
+    # gtSVM/bin/auto_context.hpp
+    # gtSVM/lib/cuda.hpp
+    # gtSVM/lib/cuda_array.cu
+    # gtSVM/lib/cuda_array.hpp
+    # gtSVM/lib/cuda_exception.cpp
+    # gtSVM/lib/cuda_exception.hpp
+    # gtSVM/lib/cuda_find_largest.cu
+    # gtSVM/lib/cuda_find_largest.hpp
+    # gtSVM/lib/cuda_helpers.hpp
+    # gtSVM/lib/cuda_partial_sum.cu
+    # gtSVM/lib/cuda_partial_sum.hpp
+    # gtSVM/lib/cuda_reduce.cu
+    # gtSVM/lib/cuda_reduce.hpp
+    # gtSVM/lib/cuda_sparse_kernel.cu
+    # gtSVM/lib/cuda_sparse_kernel.hpp
+    # gtSVM/lib/gtsvm.cpp
+    # gtSVM/lib/gtsvm.h
+    # gtSVM/lib/headers.hpp
+    # gtSVM/lib/helpers.hpp
+    # gtSVM/lib/svm_gt.cpp
+    # gtSVM/lib/svm_gt.hpp
+    # gtSVM/boost_helpers.h #workaround so we don't need boost
+    # gtSVM/boost_headers.h #workaround so we don't need boost
+    # gtSVM/gtSVM_wrapper.cpp
+    # gtSVM/gtSVM_wrapper.h
+# )
 
 SET(libSVM_src
     libSVM/libSVM_utils.cpp
@@ -317,19 +335,7 @@ FOREACH(LIBDIR accLibSVM cuSVM GPULibSVM gpuSVM gtSVM libSVM multiSVM openclSVM 
 ENDFOREACH()
 #end of Visual Studio Source Group definitions
 
-FIND_PATH(CUDA_COMMON_INCLUDE_DIRS
-    helper_cuda.h
-    PATHS ${CUDA_SDK_SEARCH_PATH}
-    "/usr/local/cuda-${CUDA_VERSION}/samples/common/inc"
-    "C:/ProgramData/NVIDIA Corporation/CUDA Samples/v${CUDA_VERSION}/common/inc"
-    DOC "Location of helper_cuda.h"
-    NO_DEFAULT_PATH)
-
 INCLUDE_DIRECTORIES(
-    ${CUDA_COMMON_INCLUDE_DIRS}
-    ${OpenCL_INCLUDE_DIR}
-    $ENV{MKLROOT}/include
-    $ENV{IPPROOT}/include     
     .
     libSVM
     accLibSVM
@@ -346,8 +352,20 @@ INCLUDE_DIRECTORIES(
     gpuSVM/common
     gpuSVM/include
     gpuSVM/training
-    wuSVM
 )
+IF(COMPILE_WITH_GPUSVM)
+    INCLUDE_DIRECTORIES(${CUDA_COMMON_INCLUDE_DIRS})
+ENDIF()
+IF(COMPILE_WITH_WUSVM)
+    INCLUDE_DIRECTORIES(
+        $ENV{MKLROOT}/include
+        $ENV{IPPROOT}/include
+        wuSVM
+    )
+ENDIF()
+IF(COMPILE_WITH_OPENCLSVM)
+    INCLUDE_DIRECTORIES(${OpenCL_INCLUDE_DIR})
+ENDIF()
 
 FUNCTION(ADD_IMP IMP SRCVAR)
     IF(COMPILE_WITH_${IMP})
@@ -362,7 +380,7 @@ ADD_IMP(GPULIBSVM SRC ${GPULibSVM_src})
 ADD_IMP(CUSVM SRC ${cuSVM_src})
 ADD_IMP(GPUSVM SRC ${gpuSVM_src})
 ADD_IMP(MULTISVM SRC ${multiSVM_src})
-ADD_IMP(GTSVM SRC ${gtSVM_src})
+# ADD_IMP(GTSVM SRC ${gtSVM_src})
 ADD_IMP(ORCUSSVM SRC ${orcusSVM_src})
 ADD_IMP(ORCUSSVMCPU SRC ${orcusSVMCPU_src})
 ADD_IMP(ORCUSSVM1B SRC ${orcusSVM1Block_src})
@@ -385,6 +403,11 @@ ENDIF()
 IF(Boost_FOUND)
     INCLUDE_DIRECTORIES(${Boost_INCLUDE_DIR})
     ADD_DEFINITIONS(-DUSE_BOOST)
+ENDIF()
+
+IF(COMPILE_WITH_GTSVM)
+    ADD_DEFINITIONS(-DCOMPILE_WITH_GTSVM)
+    ADD_SUBDIRECTORY(main_gpl)
 ENDIF()
 
 CUDA_ADD_EXECUTABLE(SVMbenchmark ${SRC})

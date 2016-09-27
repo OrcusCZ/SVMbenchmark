@@ -185,6 +185,13 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
         model = new GtSvmModel(false);
         return SUCCESS;
 #endif
+#ifdef COMPILE_WITH_GTSVM
+	case 7:
+		printf("Using gtSVM(small clusters) (Andrew Cotter)...\n\n");
+		data = new GtSvmData;
+		model = new GtSvmModel(true);
+		return SUCCESS;
+#endif
 	default:
         printf("Error: Invalid implementation \"%d\"!\n\n", imp);
         print_help();
@@ -218,6 +225,7 @@ void print_help() {
         "  i  Select implementation to use. Corresponding values:\n"
 #ifdef COMPILE_WITH_GTSVM
         "         6   GTSVM - large clusters (Andrew Cotter)\n"
+        "         7   GTSVM - small clusters (Andrew Cotter)\n"
 #endif
         "  b  Read input data in binary format (lasvm dense or sparse format)\n"
         "  w  Working set size (currently only for implementation 12)\n"

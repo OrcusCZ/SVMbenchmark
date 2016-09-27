@@ -20,7 +20,7 @@ Dependencies:
    - If CUDA is not installed in default directory, libcuda.so.1 may not be found by CMake. If this happens, set environmental variable CUDA_LIB_PATH to point to the directory with libcuda.so.1 prior to executing CMake.
 3. Optionally install Intel MKL and IPP libraries.
    - These libraries are required by wuSVM, if they are not found, application will be compiled without wuSVM.
-   - environmental variables MKLROOT and IPPROOT must be set to point to the root directories of these libraries so CMake can properly find them.
+   - Environmental variables MKLROOT and IPPROOT must be set to point to the root directories of these libraries so CMake can properly find them.
 4. If Boost is installed and not found by CMake, environmental variable BOOST_ROOT can be set to point to the Boost root directory.
    - Boost is required by gtSVM, but changes were made to the code to not require Boost. If Boost is not found, our workaround is used.
 5. Use CMake to generate makefile / Visual Studio project files. Specific SVM implementations can be enabled / disabled during CMake configuration.

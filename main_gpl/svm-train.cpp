@@ -204,7 +204,7 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
 /* Print help information. */
 void print_help() {
     printf("SVM-train benchmark\n"
-        "Use: SVM-train.exe <data> <model> [-<attr1> <value1> ...]\n\n"
+        "Use: SVMbenchmark_gpl.exe <data> <model> [-<attr1> <value1> ...]\n\n"
         " data   File containing data to be used for training.\n"
         " model  Where to store model in LibSVM format.\n"
         " attrx  Attribute to set.\n"

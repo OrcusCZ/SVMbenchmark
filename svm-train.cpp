@@ -41,11 +41,16 @@ SOFTWARE.
 #ifdef COMPILE_WITH_MULTISVM
 #include "multiSVM_wrapper.h"
 #endif
-//#ifdef COMPILE_WITH_GTSVM
-//#include "gtSVM_wrapper.h"
-//#endif
+#ifdef COMPILE_WITH_GTSVM
+#ifndef SEPARATE_GPL_BIN
+#include "gtSVM_wrapper.h"
+#endif
+#endif
 #ifdef COMPILE_WITH_WUSVM
 #include "wuSVM_wrapper.h"
+#endif
+#ifdef COMPILE_WITH_OHDSVM
+#include "ohdSVM_wrapper.h"
 #endif
 
 #include "utils.h"
@@ -190,6 +195,17 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
                 *file_type = LASVM_BINARY;
                 i--;
                 break;
+			case 't':
+				switch (argv[i][0])
+				{
+				case 'd': *data_type = DENSE; break;
+				case 's': *data_type = SPARSE; break;
+				default:
+					printf("Error: Invalid data type \"%c\"!\n\n", argv[i][0]);
+					print_help();
+					return FAILURE;
+				}
+				break;
             default:
                 printf("Error: Invalid attribute \"%c\"!\n\n", argv[i - 1][1]);
                 print_help();
@@ -237,20 +253,20 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
         model = new MultiSvmModel;
         return SUCCESS;
 #endif
-///#ifdef COMPILE_WITH_GTSVM
-//    case 6:
-//        printf("Using gtSVM(large clusters) (Andrew Cotter)...\n\n");
-//        data = new GtSvmData;
-//        model = new GtSvmModel(false);
-//        return SUCCESS;
-//#endif
-//#ifdef COMPILE_WITH_GTSVM
-//	case 7:
-//		printf("Using gtSVM(small clusters) (Andrew Cotter)...\n\n");
-//		data = new GtSvmData;
-//		model = new GtSvmModel(true);
-//		return SUCCESS;
-//#endif
+#ifdef COMPILE_WITH_GTSVM
+#ifndef SEPARATE_GPL_BIN
+   case 6:
+       printf("Using gtSVM(large clusters) (Andrew Cotter)...\n\n");
+       data = new GtSvmData;
+       model = new GtSvmModel(false);
+       return SUCCESS;
+	case 7:
+		printf("Using gtSVM(small clusters) (Andrew Cotter)...\n\n");
+		data = new GtSvmData;
+		model = new GtSvmModel(true);
+		return SUCCESS;
+#endif
+#endif
 #ifdef COMPILE_WITH_WUSVM
 	case 8:
 		printf("Using WuLibSVM<double, lasp, openMP>...\n\n");
@@ -293,6 +309,13 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
 		model = new WuSvmModel(true, true, true); //first bool is: single(true) or double(false), second use_pegasos implementation, third is GPU (true) or CPU openMP (false)
 		return SUCCESS;
 #endif
+#ifdef COMPILE_WITH_OHDSVM
+	case 16:
+		printf("Using OHD-SVM...\n\n");
+		data = new ohdSVMData;
+		model = new ohdSVMModel;
+		return SUCCESS;
+#endif
 	default:
         printf("Error: Invalid implementation \"%d\"!\n\n", imp);
         print_help();
@@ -323,6 +346,9 @@ void print_help() {
         "  d  Kernel parameter degree.\n"
         "  g  Kernel parameter gamma.\n"
         "  f  Kernel parameter coef0.\n"
+		"  t  Force data type. Values are:\n"
+		"         d   Dense data\n"
+		"         s   Sparse data\n"
         "  i  Select implementation to use. Corresponding values:\n"
 #ifdef COMPILE_WITH_LIBSVM
         "         1   LibSVM (default)\n"
@@ -342,7 +368,9 @@ void print_help() {
 #ifdef COMPILE_WITH_GTSVM
         "         6   GTSVM - large clusters (Andrew Cotter)\n"
         "         7   GTSVM - small clusters (Andrew Cotter)\n"
+#ifdef SEPARATE_GPL_BIN
 		"             Disabled due to license issues, use GPL build\n"
+#endif
 #endif
 #ifdef COMPILE_WITH_WUSVM
 		"         8   WuSVM<double, lasp, openMP> (Tyree et al.)\n"
@@ -354,8 +382,11 @@ void print_help() {
 		"        14   WuSVM<float, pegasos, openMP> (Tyree et al.)\n"
 		"        15   WuSVM<float, pegasos, GPU> (Tyree et al.)\n"
 #endif
+#ifdef COMPILE_WITH_OHDSVM
+		"        16   OHD-SVM (Michalek,Vanek)\n"
+#endif
         "  b  Read input data in binary format (lasvm dense or sparse format)\n"
-        "  w  Working set size (currently only for implementation 12)\n"
+        "  w  Working set size (currently only for implementation 16)\n"
         "  r  Cache size in MB\n"
         );
 }

@@ -10,7 +10,9 @@ SET(COMPILE_WITH_CUSVM ON CACHE BOOL "Compile with CuSVM")
 SET(COMPILE_WITH_GPUSVM ON CACHE BOOL "Compile with GpuSVM")
 SET(COMPILE_WITH_MULTISVM ON CACHE BOOL "Compile with MultiSVM")
 SET(COMPILE_WITH_GTSVM ON CACHE BOOL "Compile with GTSVM")
-SET(COMPILE_WITH_WUSVM ON CACHE BOOL "Compile with WuSVM")
+SET(COMPILE_WITH_WUSVM OFF CACHE BOOL "Compile with WuSVM")
+SET(COMPILE_WITH_OHDSVM OFF CACHE BOOL "Compile with OHD-SVM")
+SET(SEPARATE_GPL_BIN OFF CACHE BOOL "Put GPL implementations to separate executable file")
 
 IF(NOT NO_CUDA)
     FIND_PACKAGE(CUDA)
@@ -24,22 +26,28 @@ ENDIF()
 IF(NO_CUDA OR NOT CUDA_FOUND)
     SET(COMPILE_WITH_GPULIBSVM OFF)
     SET(COMPILE_WITH_CUSVM OFF)
-    # SET(COMPILE_WITH_GPUSVM OFF)
+    SET(COMPILE_WITH_GPUSVM OFF)
     SET(COMPILE_WITH_MULTISVM OFF)
     SET(COMPILE_WITH_GTSVM OFF)
+    SET(COMPILE_WITH_OHDSVM OFF)
 ELSE()
     ADD_DEFINITIONS(-DWUCUDA) #wuSVM
-    LIST(APPEND CUDA_NVCC_FLAGS "-arch=sm_30")
+    IF(NOT COMPILE_WITH_OHDSVM)
+        LIST(APPEND CUDA_NVCC_FLAGS "-arch=sm_30")
+    ENDIF()
+IF(SEPARATE_GPL_BIN)
+    ADD_DEFINITIONS(-DSEPARATE_GPL_BIN)
+ENDIF()
 ENDIF()
 
-# IF(COMPILE_WITH_GTSVM)
-    # IF(NOT NO_BOOST)
-        # FIND_PACKAGE(Boost) #needed for gtSVM
-        # IF(NOT Boost_FOUND)
-            # MESSAGE("Boost not found, using workaround for gtSVM")
-        # ENDIF()
-    # ENDIF()
-# ENDIF()
+IF(NOT SEPARATE_GPL_BIN AND COMPILE_WITH_GTSVM)
+    IF(NOT NO_BOOST)
+        FIND_PACKAGE(Boost) #needed for gtSVM
+        IF(NOT Boost_FOUND)
+            MESSAGE("Boost not found, using workaround for gtSVM")
+        ENDIF()
+    ENDIF()
+ENDIF()
 IF(CMAKE_COMPILER_IS_GNUCC)
     STRING(REGEX REPLACE ".*/" "" C ${CUDA_HOST_COMPILER})
     IF(${C} STREQUAL "ccache")
@@ -137,33 +145,33 @@ SET(gpuSVM_src
     gpuSVM/gpuSVM_wrapper.h
 )
 
-# SET(gtSVM_src
-    # gtSVM/bin/auto_context.hpp
-    # gtSVM/lib/cuda.hpp
-    # gtSVM/lib/cuda_array.cu
-    # gtSVM/lib/cuda_array.hpp
-    # gtSVM/lib/cuda_exception.cpp
-    # gtSVM/lib/cuda_exception.hpp
-    # gtSVM/lib/cuda_find_largest.cu
-    # gtSVM/lib/cuda_find_largest.hpp
-    # gtSVM/lib/cuda_helpers.hpp
-    # gtSVM/lib/cuda_partial_sum.cu
-    # gtSVM/lib/cuda_partial_sum.hpp
-    # gtSVM/lib/cuda_reduce.cu
-    # gtSVM/lib/cuda_reduce.hpp
-    # gtSVM/lib/cuda_sparse_kernel.cu
-    # gtSVM/lib/cuda_sparse_kernel.hpp
-    # gtSVM/lib/gtsvm.cpp
-    # gtSVM/lib/gtsvm.h
-    # gtSVM/lib/headers.hpp
-    # gtSVM/lib/helpers.hpp
-    # gtSVM/lib/svm_gt.cpp
-    # gtSVM/lib/svm_gt.hpp
-    # gtSVM/boost_helpers.h #workaround so we don't need boost
-    # gtSVM/boost_headers.h #workaround so we don't need boost
-    # gtSVM/gtSVM_wrapper.cpp
-    # gtSVM/gtSVM_wrapper.h
-# )
+SET(gtSVM_src
+    gtSVM/bin/auto_context.hpp
+    gtSVM/lib/cuda.hpp
+    gtSVM/lib/cuda_array.cu
+    gtSVM/lib/cuda_array.hpp
+    gtSVM/lib/cuda_exception.cpp
+    gtSVM/lib/cuda_exception.hpp
+    gtSVM/lib/cuda_find_largest.cu
+    gtSVM/lib/cuda_find_largest.hpp
+    gtSVM/lib/cuda_helpers.hpp
+    gtSVM/lib/cuda_partial_sum.cu
+    gtSVM/lib/cuda_partial_sum.hpp
+    gtSVM/lib/cuda_reduce.cu
+    gtSVM/lib/cuda_reduce.hpp
+    gtSVM/lib/cuda_sparse_kernel.cu
+    gtSVM/lib/cuda_sparse_kernel.hpp
+    gtSVM/lib/gtsvm.cpp
+    gtSVM/lib/gtsvm.h
+    gtSVM/lib/headers.hpp
+    gtSVM/lib/helpers.hpp
+    gtSVM/lib/svm_gt.cpp
+    gtSVM/lib/svm_gt.hpp
+    gtSVM/boost_helpers.h #workaround so we don't need boost
+    gtSVM/boost_headers.h #workaround so we don't need boost
+    gtSVM/gtSVM_wrapper.cpp
+    gtSVM/gtSVM_wrapper.h
+)
 
 SET(libSVM_src
     libSVM/libSVM_utils.cpp
@@ -180,7 +188,6 @@ SET(multiSVM_src
     multiSVM/multiSVM_wrapper.h
 )
 
-ADD_DEFINITIONS(-DCPP11) #wusvm    
 
 SET(wuSVM_src
     wuSVM/wuSVM_wrapper.h
@@ -294,8 +301,16 @@ ADD_IMP(GPULIBSVM SRC ${GPULibSVM_src})
 ADD_IMP(CUSVM SRC ${cuSVM_src})
 ADD_IMP(GPUSVM SRC ${gpuSVM_src})
 ADD_IMP(MULTISVM SRC ${multiSVM_src})
-# ADD_IMP(GTSVM SRC ${gtSVM_src})
+IF(NOT SEPARATE_GPL_BIN)
+    ADD_IMP(GTSVM SRC ${gtSVM_src})
+ENDIF()
 ADD_IMP(WUSVM SRC ${wuSVM_src})
+IF(COMPILE_WITH_OHDSVM)
+    MESSAGE("Compiling with: OHD-SVM")
+    ADD_DEFINITIONS(-DCOMPILE_WITH_OHDSVM)
+    ADD_SUBDIRECTORY(OHD-SVM)
+    LIST(APPEND SRC ohdSVM_wrapper.h ohdSVM_wrapper.cpp)
+ENDIF()
 
 IF(COMPILE_WITH_WUSVM)
     LINK_DIRECTORIES (
@@ -311,7 +326,9 @@ ENDIF()
 
 IF(COMPILE_WITH_GTSVM)
     ADD_DEFINITIONS(-DCOMPILE_WITH_GTSVM)
-    ADD_SUBDIRECTORY(main_gpl)
+    IF(SEPARATE_GPL_BIN)
+        ADD_SUBDIRECTORY(main_gpl)
+    ENDIF()
 ENDIF()
 
 CUDA_ADD_EXECUTABLE(SVMbenchmark ${SRC})
@@ -319,5 +336,8 @@ CUDA_ADD_CUBLAS_TO_TARGET(SVMbenchmark)
 TARGET_LINK_LIBRARIES(SVMbenchmark ${CUDA_CUDA_LIBRARY})
 IF(COMPILE_WITH_WUSVM)
     TARGET_LINK_LIBRARIES(SVMbenchmark ${MKL_MY_LIB_FILES} ${IPP_MY_LIB_FILES})
+ENDIF()
+IF(COMPILE_WITH_OHDSVM)
+    TARGET_LINK_LIBRARIES(SVMbenchmark ohd-svm)
 ENDIF()
 SET_PROPERTY(TARGET SVMbenchmark PROPERTY CXX_STANDARD 11)

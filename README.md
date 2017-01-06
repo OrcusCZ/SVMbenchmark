@@ -11,6 +11,7 @@ Dependencies:
 - Intel MKL (optional, required by wuSVM)
 - Intel IPP (optional, required by wuSVM)
 - Boost (optional, used by gtSVM if found, but can work without Boost)
+- [OHD-SVM](https://github.com/OrcusCZ/OHD-SVM) (optional, only if this implementation is enabled in CMake)
 
 ### Compilation steps
 1. Download the source codes
@@ -23,8 +24,10 @@ Dependencies:
    - Environmental variables MKLROOT and IPPROOT must be set to point to the root directories of these libraries so CMake can properly find them.
 4. If Boost is installed and not found by CMake, environmental variable BOOST_ROOT can be set to point to the Boost root directory.
    - Boost is required by gtSVM, but changes were made to the code to not require Boost. If Boost is not found, our workaround is used.
-5. Use CMake to generate makefile / Visual Studio project files. Specific SVM implementations can be enabled / disabled during CMake configuration.
-6. Compile using "make" or Visual Studio.
+5. Optionally clone [OHD-SVM](https://github.com/OrcusCZ/OHD-SVM) repository into SVMbenchmark directory so you end up with folder structure `SVMbenchmark/OHD-SVM`.
+   - Only needed if OHD-SVM implementation is enabled in CMake.
+6. Use CMake to generate makefile / Visual Studio project files. Specific SVM implementations can be enabled / disabled during CMake configuration.
+7. Compile using "make" or Visual Studio.
 
 ## Program options
 	Use: SVMbenchmark.exe <data> <model> [-<attr1> <value1> ...]
@@ -45,6 +48,9 @@ Dependencies:
 	d  Kernel parameter degree.
 	g  Kernel parameter gamma.
 	f  Kernel parameter coef0.
+	t  Force data type. Values are:
+		d   Dense data
+		s   Sparse data
 	i  Select implementation to use. Corresponding values:
 		 1   LibSVM (default)
 		 2   GPU-LibSVM (Athanasopoulos)
@@ -52,16 +58,16 @@ Dependencies:
 		 4   GpuSVM (Catanzaro)
 		 5   MultiSVM (Herrero-Lopez)
 		 6   GTSVM - large clusters (Andrew Cotter)
-         7   GTSVM - small clusters (Andrew Cotter)
-         8   WuSVM<double, lasp, openMP> (Tyree et al.)
+		 7   GTSVM - small clusters (Andrew Cotter)
+		 8   WuSVM<double, lasp, openMP> (Tyree et al.)
 		 9   WuSVM<double, lasp, GPU> (Tyree et al.)
 		10   WuSVM<double, pegasos, openMP> (Tyree et al.)
 		11   WuSVM<double, pegasos, GPU> (Tyree et al.)
 		12   WuSVM<float, lasp, openMP> (Tyree et al.)
 		13   WuSVM<float, lasp, GPU> (Tyree et al.)
 		14   WuSVM<float, pegasos, openMP> (Tyree et al.)
-		15   WuSVM<float, pegasos, GPU> (Tyree et al.)		
-		
+		15   WuSVM<float, pegasos, GPU> (Tyree et al.)
+		16   OHD-SVM (Michalek,Vanek)
 	b  Read input data in binary format (lasvm dense or sparse format)
 	w  Working set size (currently only for implementation 12)
 	r  Cache size in MB

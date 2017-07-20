@@ -71,6 +71,12 @@ Dependencies:
 	b  Read input data in binary format (lasvm dense or sparse format)
 	w  Working set size (currently only for implementation 12)
 	r  Cache size in MB
+	x  Implementation specific parameter:
+	   OHD-SVM: Two numbers separated by comma specifying EllR-T
+	            storage format dimensions: sliceSize,threadsPerRow
+	            Value 0,0 means automatic parameter selection.
+	            Specifying -x implies EllR-T, do not specify -x
+	            to use JDS.
 
 If no kernel is specified, RBF is used.
 Default value for epsilon (-e) is 1e-3.

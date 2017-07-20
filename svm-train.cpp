@@ -62,6 +62,7 @@ using namespace libsvm;
 int g_cache_size = 0;
 bool g_step_on_cpu = false;
 int g_ws_size = 0;
+std::string g_imp_spec_arg;
 
 int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_params * params, SVM_FILE_TYPE *file_type, SVM_DATA_TYPE *data_type, SVM_MODEL_FILE_TYPE *model_file_type);
 
@@ -135,7 +136,13 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
 
     if (argc >= INPUT_ARGS_MIN) {
         for (i = INPUT_ARGS_MIN; i < argc; i++) {
-            if (argv[i][0] != '-' || (argv[i][1] != 'b' && (i + 1) == argc)) {
+			if (argv[i][0] != '-') {
+				printf("Error: Unexpected argument '%s'\n\n", argv[i]);
+				print_help();
+				return FAILURE;
+			}
+			if (argv[i][1] != 'b' && (i + 1) == argc) {
+				printf("Error: Missing parameter for argument '%s'\n\n", argv[i]);
                 print_help();
                 return FAILURE;
             }
@@ -205,6 +212,9 @@ int help(int argc, char **argv, SvmData * &data, SvmModel * &model, struct svm_p
 					print_help();
 					return FAILURE;
 				}
+				break;
+			case 'x':
+				g_imp_spec_arg = argv[i];
 				break;
             default:
                 printf("Error: Invalid attribute \"%c\"!\n\n", argv[i - 1][1]);
@@ -388,5 +398,11 @@ void print_help() {
         "  b  Read input data in binary format (lasvm dense or sparse format)\n"
         "  w  Working set size (currently only for implementation 16)\n"
         "  r  Cache size in MB\n"
+        "  x  Implementation specific parameter:\n"
+        "     OHD-SVM: Two numbers separated by comma specifying EllR-T\n"
+        "              storage format dimensions: sliceSize,threadsPerRow\n"
+        "              Value 0,0 means automatic parameter selection.\n"
+        "              Specifying -x implies EllR-T, do not specify -x\n"
+        "              to use JDS.\n"
         );
 }

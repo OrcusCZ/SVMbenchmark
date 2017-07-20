@@ -706,6 +706,7 @@ int SvmData::load_libsvm_data_sparse(FILE * &fid, SVM_DATA_TYPE data_type, svm_m
 		/* Free memory. */
 		free(sbuf);
 	}
+	printf("NNZ: %d\n%% NNZ: %.3lf\nAvg. NNZ per row: %.3lf\n", data_csr->nnz, 100. * data_csr->nnz / (numVects * dimVects), data_csr->nnz / (double)numVects);
 
 	allocatedByCudaHost = req_data_format->allocate_pinned || req_data_format->allocate_write_combined;
 	this->type = SPARSE;
@@ -819,6 +820,7 @@ int SvmData::load_lasvm_binary_data(FILE * &fid, svm_memory_dataformat *req_data
 		}
 		dimVects_aligned = ALIGN_UP(dimVects, req_data_format->dimAlignment);
 		data_csr->numCols = dimVects;
+		printf("NNZ: %d\n%% NNZ: %.3lf\nAvg. NNZ per row: %.3lf\n", data_csr->nnz, 100. * data_csr->nnz / (numVects * dimVects), data_csr->nnz / (double)numVects);
 	}
 
 	//make class labels
@@ -1013,11 +1015,11 @@ int SvmModel::StoreModel_LIBSVM_TXT(char *model_file_name) {
 	return SUCCESS;
 } //StoreModel
 
-int SvmModel::LoadModelGeneric(char *model_file_name, SVM_MODEL_FILE_TYPE type, struct svm_memory_dataformat *req_data_format) {
+int SvmModel::LoadModelGeneric(char *model_file_name, SVM_MODEL_FILE_TYPE type, SVM_DATA_TYPE data_type, struct svm_memory_dataformat *req_data_format) {
 
     switch(type) {
         case M_LIBSVM_TXT:
-            SAFE_CALL(LoadModel_LIBSVM_TXT(model_file_name, req_data_format));
+            SAFE_CALL(LoadModel_LIBSVM_TXT(model_file_name, data_type, req_data_format));
             break;
         default:
             REPORT_ERROR("Unsupported model storage format");
@@ -1026,19 +1028,16 @@ int SvmModel::LoadModelGeneric(char *model_file_name, SVM_MODEL_FILE_TYPE type, 
     return SUCCESS;
 }
 
-int SvmModel::LoadModel_LIBSVM_TXT(char *model_file_name, struct svm_memory_dataformat *req_data_format) {
+int SvmModel::LoadModel_LIBSVM_TXT(char *model_file_name, SVM_DATA_TYPE data_type, struct svm_memory_dataformat *req_data_format) {
 
-	//if (alphas == NULL || data == NULL || params == NULL) {
-		//return FAILURE;
-	//}
-	//if(data->data_dense == NULL && data->data_csr == NULL) {
-		//return FAILURE;
-	//}
 	if (data == NULL || params == NULL) {
 		return FAILURE;
 	}
+    bool sparse = (req_data_format->supported_types & SUPPORTED_FORMAT_CSR) && (data_type == UNKNOWN || data_type == SPARSE);
+    data->type = sparse ? SPARSE : DENSE;
 
-    std::ifstream fin(model_file_name, std::ios::in | std::ios::binary);
+    //std::ifstream fin(model_file_name, std::ios::in | std::ios::binary);
+	std::ifstream fin(model_file_name, std::ios::in);
     if (!fin)
     {
         std::cerr << "Failed to open model file '" << model_file_name << "' for reading\n";
@@ -1048,12 +1047,13 @@ int SvmModel::LoadModel_LIBSVM_TXT(char *model_file_name, struct svm_memory_data
     //read header
     while (std::getline(fin, line))
     {
-        if (line.compare("SV") == 0)  //header end
+		if (line.compare("SV") == 0)  //header end
             break;
         std::vector<std::string> tokens;
         split(line, ' ', tokens);
+
         if (tokens[0].compare("svm_type") == 0) {
-            if (tokens[1].compare("c_svc") != 0)
+			if (tokens[1].compare("c_svc") != 0)
                 throw std::runtime_error("Unsupported SVM type");
         }
         else if (tokens[0].compare("kernel_type") == 0) {
@@ -1103,6 +1103,7 @@ int SvmModel::LoadModel_LIBSVM_TXT(char *model_file_name, struct svm_memory_data
         }
     }
     //get data dim
+    int nnz = 0;
     std::streampos spos = fin.tellg();
     while (std::getline(fin, line)) {
         std::vector<std::string> tokens;
@@ -1112,7 +1113,7 @@ int SvmModel::LoadModel_LIBSVM_TXT(char *model_file_name, struct svm_memory_data
             if (d > data->dimVects)
                 data->dimVects = d;
         }
-
+        nnz += tokens.size() - 1;
     }
     fin.clear();
     fin.seekg(spos);
@@ -1120,11 +1121,24 @@ int SvmModel::LoadModel_LIBSVM_TXT(char *model_file_name, struct svm_memory_data
     data->numVects_aligned = ALIGN_UP(data->numVects, req_data_format->vectAlignment);
     data->dimVects_aligned = ALIGN_UP(data->dimVects, req_data_format->dimAlignment);
 
-    malloc_general(req_data_format, (void **) & data->data_dense, sizeof(float) * data->dimVects_aligned * data->numVects_aligned);
     malloc_general(req_data_format, (void **) & alphas, sizeof(float) * data->numVects_aligned);
-    memset(data->data_dense, 0, sizeof(float) * data->dimVects_aligned * data->numVects_aligned);
+    if (sparse) {
+        data->data_csr = new csr;
+        data->data_csr->nnz = nnz;
+        data->data_csr->numCols = data->dimVects;
+        data->data_csr->numRows = data->numVects;
+        malloc_general(req_data_format, (void **) &data->data_csr->values, sizeof(float) * nnz);
+        malloc_general(req_data_format, (void **) &data->data_csr->colInd, sizeof(unsigned int) * nnz);
+        malloc_general(req_data_format, (void **) &data->data_csr->rowOffsets, sizeof(unsigned int) * (data->numVects_aligned + 1));
+        data->data_csr->rowOffsets[0] = 0;
+    }
+    else {
+        malloc_general(req_data_format, (void **) &data->data_dense, sizeof(float) * data->dimVects_aligned * data->numVects_aligned);
+        memset(data->data_dense, 0, sizeof(float) * data->dimVects_aligned * data->numVects_aligned);
+    }
     //read SV
     int k = 0;
+    int offset = 0;
     while (std::getline(fin, line)) {
         std::vector<std::string> tokens;
         split(line, ' ', tokens);
@@ -1133,13 +1147,25 @@ int SvmModel::LoadModel_LIBSVM_TXT(char *model_file_name, struct svm_memory_data
             size_t colon;
             int d = std::stoi(tokens[i], &colon) - 1;
             float v = std::strtof(tokens[i].c_str() + colon + 1, 0);
-            if (req_data_format->transposed)
-                data->data_dense[data->numVects_aligned * d + k] = v;
-            else
-                data->data_dense[data->dimVects_aligned * k + d] = v;
+            if (sparse) {
+                data->data_csr->values[offset] = v;
+                data->data_csr->colInd[offset] = d;
+                offset++;
+            }
+            else {
+                if (req_data_format->transposed)
+                    data->data_dense[data->numVects_aligned * d + k] = v;
+                else
+                    data->data_dense[data->dimVects_aligned * k + d] = v;
+            }
         }
         k++;
+        if (sparse)
+            data->data_csr->rowOffsets[k] = offset;
     }
+    if (sparse)
+        for (k++ ; k < data->numVects_aligned + 1; k++)
+            data->data_csr->rowOffsets[k] = offset;
 
     return SUCCESS;
 }
@@ -1170,7 +1196,7 @@ int SvmModel::Predict(SvmData *testData, const char * file_out)
     return FAILURE;
 }
 
-int SvmModel::LoadModel(char *model_file_name, SVM_MODEL_FILE_TYPE type)
+int SvmModel::LoadModel(char *model_file_name, SVM_MODEL_FILE_TYPE type, SVM_DATA_TYPE data_type)
 {
     return FAILURE;
 }
@@ -1186,6 +1212,7 @@ void malloc_general(svm_memory_dataformat *req_data_format, void **x, size_t siz
 		}
 	}
 } //malloc_general
+
 
 int GenericSvmData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type) {
 

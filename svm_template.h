@@ -145,8 +145,8 @@ protected:
 
 	int StoreModel_LIBSVM_TXT(char *model_file_name);
 	int StoreModelGeneric(char *model_file_name, SVM_MODEL_FILE_TYPE type);
-	int LoadModel_LIBSVM_TXT(char *model_file_name, struct svm_memory_dataformat *req_data_format);
-	int LoadModelGeneric(char *model_file_name, SVM_MODEL_FILE_TYPE type, struct svm_memory_dataformat *req_data_format);
+	int LoadModel_LIBSVM_TXT(char *model_file_name, SVM_DATA_TYPE data_type, struct svm_memory_dataformat *req_data_format);
+	int LoadModelGeneric(char *model_file_name, SVM_MODEL_FILE_TYPE type, SVM_DATA_TYPE data_type, struct svm_memory_dataformat *req_data_format);
 	int CalculateSupperVectorCounts();
 
 public:
@@ -156,7 +156,7 @@ public:
 	virtual int Train(SvmData *data, struct svm_params * params, struct svm_trainingInfo *trainingInfo) = 0;
 	virtual int Predict(SvmData *testData, const char * file_out);
 	virtual int StoreModel(char *model_file_name, SVM_MODEL_FILE_TYPE type) = 0;
-	virtual int LoadModel(char *model_file_name, SVM_MODEL_FILE_TYPE type);
+	virtual int LoadModel(char *model_file_name, SVM_MODEL_FILE_TYPE type, SVM_DATA_TYPE data_type);
 };
 
 class Utils {

@@ -1,8 +1,10 @@
 #include "ohdSVM_wrapper.h"
 #include "OHD-SVM/ohdSVM.h"
 #include "utils.h"
+#include <string>
 
 extern int g_ws_size;
+extern std::string g_imp_spec_arg;
 
 int ohdSVMData::Load(char *filename, SVM_FILE_TYPE file_type, SVM_DATA_TYPE data_type)
 {
@@ -26,10 +28,18 @@ int ohdSVMModel::Train(SvmData *data, struct svm_params * params, struct svm_tra
     this->params = params;
 
     alphas = (float *)malloc(data->GetNumVects() * sizeof(float));
-    float rho;
+	float rho = 0;
 
     try
     {
+		size_t pos = g_imp_spec_arg.find(',');
+		if (pos != std::string::npos)
+		{
+			int sliceSize = atoi(g_imp_spec_arg.c_str());
+			int threadsPerRow = atoi(g_imp_spec_arg.c_str() + pos + 1);
+			ohdSVM::useEllRT(true, sliceSize, threadsPerRow);
+		}
+
         bool is_sparse = data->GetDataType() == SVM_DATA_TYPE::SPARSE;
 		ohdSVM::Data x;
         if (is_sparse)
